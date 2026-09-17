@@ -1,0 +1,15 @@
+services:
+  arca-drive:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arca-drive
+    restart: unless-stopped
+    ports:
+      - "${ARCA_DRIVE_PORT:-8080}:80"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
