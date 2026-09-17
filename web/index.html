@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Arca Drive, prototipo di spazio file aziendale.">
+  <title>Arca Drive</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span>A</span>Arca Drive</div>
+    <label class="new">＋ Carica file<input id="upload" type="file" multiple hidden></label>
+    <nav>
+      <button class="nav active" data-view="files">▦ I miei file</button>
+      <button class="nav" data-view="shared">◎ Condivisi</button>
+      <button class="nav" data-view="recent">◷ Recenti</button>
+      <button class="nav" data-view="people">♙ Persone e permessi</button>
+      <button class="nav" data-view="trash">♲ Cestino <b id="trashCount">1</b></button>
+      <button class="nav" data-view="sync">⇄ Sincronizzazione</button>
+    </nav>
+    <div class="storage"><div><span>Spazio server</span><strong>68%</strong></div><i><b></b></i><small>680 GB di 1 TB utilizzati</small></div>
+    <div class="account"><span>LB</span><div><strong>Luca Bianchi</strong><small>Amministratore</small></div></div>
+  </aside>
+  <main>
+    <header><button id="menu">☰</button><div class="search">⌕ <input id="search" placeholder="Cerca file o persone…"></div><span class="avatar">LB</span></header>
+    <section>
+      <div class="title"><div><small>Spazio aziendale /</small><h1 id="title">I miei file</h1></div><button id="folder">＋ Nuova cartella</button></div>
+      <div id="drive">
+        <div class="cards">
+          <article><span>▰</span><div><small>28 elementi</small><strong>Design System</strong><em>Modificato 12 min fa</em></div></article>
+          <article><span>▰</span><div><small>64 elementi</small><strong>Progetto Aurora</strong><em>Modificato ieri</em></div></article>
+          <article><span>▰</span><div><small>18 elementi</small><strong>Amministrazione</strong><em>Modificato 4 giorni fa</em></div></article>
+        </div>
+        <div class="panel">
+          <div class="toolbar"><div><strong>Tutti gli elementi</strong><small id="count"></small></div><div><button class="filter active" data-filter="all">Tutti</button><button class="filter" data-filter="folder">Cartelle</button><button class="filter" data-filter="file">File</button></div></div>
+          <div class="row head"><span>Nome</span><span>Proprietario</span><span>Modificato</span><span>Dimensione</span><span></span></div>
+          <div id="rows"></div>
+          <div id="empty" class="empty">Nessun elemento trovato</div>
+        </div>
+      </div>
+      <div id="people" class="hidden"><div class="stats"><article><small>Utenti attivi</small><strong>4</strong><span>su 10 licenze</span></article><article><small>Gruppi</small><strong>2</strong><span>permessi organizzati</span></article><article><small>Ospiti</small><strong>1</strong><span>accesso esterno</span></article></div><div class="panel"><div class="toolbar"><strong>Membri del team</strong><button id="invite">＋ Invita persona</button></div><div id="members"></div></div></div>
+      <div id="sync" class="hidden"><div class="syncbox"><span>⇄</span><div><small>Servizio dimostrativo</small><h2>Sincronizzazione desktop</h2><p>Il client desktop sarà disponibile nella versione server.</p><button id="desktop">Scarica per desktop</button></div></div></div>
+    </section>
+  </main>
+</div>
+<aside id="preview" class="preview"><div class="previewHead"><div><small>ANTEPRIMA</small><strong id="previewName"></strong></div><button id="closePreview">×</button></div><div id="viewer" class="viewer"></div><div class="meta"><span>Tipo <b id="ptype"></b></span><span>Dimensione <b id="psize"></b></span></div><button id="download">↓ Scarica</button></aside>
+<div id="modal" class="backdrop"><div class="modal"><button id="closeModal">×</button><small id="modalTag"></small><h2 id="modalTitle"></h2><div id="modalBody"></div><div class="actions"><button id="cancel">Annulla</button><button id="confirm">Conferma</button></div></div></div>
+<div id="toast" class="toast">✓ <span></span></div>
+<script src="app.js"></script>
+</body>
+</html>
