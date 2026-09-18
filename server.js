@@ -17,10 +17,18 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const DATABASE_URL = process.env.DATABASE_URL;
 
 if (!JWT_SECRET || JWT_SECRET.length < 32) throw new Error('JWT_SECRET must contain at least 32 characters');
-if (!DATABASE_URL) throw new Error('DATABASE_URL is required');
+if (!DATABASE_URL && !process.env.PGHOST) throw new Error('Database configuration is required');
 
 await fs.mkdir(STORAGE_DIR, { recursive: true });
-const pool = new Pool({ connectionString: DATABASE_URL });
+const pool = DATABASE_URL
+  ? new Pool({ connectionString: DATABASE_URL })
+  : new Pool({
+      host: process.env.PGHOST,
+      port: Number(process.env.PGPORT || 5432),
+      database: process.env.PGDATABASE,
+      user: process.env.PGUSER,
+      password: process.env.PGPASSWORD
+    });
 const schema = await fs.readFile(path.join(__dirname, 'db/schema.sql'), 'utf8');
 
 for (let attempt = 1; attempt <= 30; attempt++) {
