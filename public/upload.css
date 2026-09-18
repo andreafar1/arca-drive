@@ -1,0 +1,28 @@
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.upload-top {
+  display: inline-flex;
+  align-items: center;
+  padding: 11px 15px;
+  border-radius: 9px;
+  background: var(--mint);
+  color: #10372e;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+@media (max-width: 650px) {
+  .page-head {
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .page-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
