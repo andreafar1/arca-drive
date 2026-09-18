@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS entries (
   mime_type text,
   size_bytes bigint NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
   storage_name text,
+  is_system boolean NOT NULL DEFAULT false,
   is_trashed boolean NOT NULL DEFAULT false,
   trashed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -28,10 +29,14 @@ CREATE TABLE IF NOT EXISTS entries (
   )
 );
 
+ALTER TABLE entries ADD COLUMN IF NOT EXISTS is_system boolean NOT NULL DEFAULT false;
+
 CREATE INDEX IF NOT EXISTS entries_parent_idx ON entries(parent_id);
 CREATE INDEX IF NOT EXISTS entries_owner_idx ON entries(owner_id);
 CREATE INDEX IF NOT EXISTS entries_trash_idx ON entries(is_trashed);
 CREATE INDEX IF NOT EXISTS entries_name_idx ON entries(lower(name));
+CREATE UNIQUE INDEX IF NOT EXISTS entries_system_images_owner_idx
+  ON entries(owner_id) WHERE is_system=true AND name='Immagini' AND parent_id IS NULL;
 
 CREATE TABLE IF NOT EXISTS shares (
   entry_id uuid NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
