@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Arca Drive, spazio file aziendale privato.">
+  <title>Arca Drive</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="auth" class="auth">
+    <form id="authForm" class="auth-card">
+      <div class="brand"><b>A</b><span>Arca Drive</span></div>
+      <p id="authIntro">Accedi al tuo spazio aziendale.</p>
+      <label id="nameField" class="hidden">Nome<input id="name" autocomplete="name"></label>
+      <label>Email<input id="email" type="email" autocomplete="email" required></label>
+      <label>Password<input id="password" type="password" minlength="10" autocomplete="current-password" required></label>
+      <button id="authSubmit" type="submit">Accedi</button>
+      <small id="authError"></small>
+    </form>
+  </div>
+
+  <div id="app" class="app hidden">
+    <aside id="sidebar">
+      <div class="brand"><b>A</b><span>Arca Drive</span></div>
+      <label class="upload">＋ Carica file<input id="upload" type="file" multiple hidden></label>
+      <nav>
+        <button class="nav active" data-view="files">▦ I miei file</button>
+        <button class="nav" data-view="trash">♲ Cestino</button>
+        <button class="nav admin-only" data-view="people">♙ Persone</button>
+      </nav>
+      <div class="account"><span id="initials"></span><div><strong id="userName"></strong><small id="userRole"></small></div></div>
+      <button id="logout" class="logout">Esci</button>
+    </aside>
+    <main>
+      <header>
+        <button id="menu">☰</button>
+        <div class="search">⌕ <input id="search" placeholder="Cerca file e cartelle…"></div>
+      </header>
+      <section>
+        <div class="page-head">
+          <div><small id="breadcrumb">Spazio aziendale /</small><h1 id="title">I miei file</h1></div>
+          <button id="newFolder">＋ Nuova cartella</button>
+        </div>
+        <div id="drive" class="panel">
+          <div class="table-head"><span>Nome</span><span>Proprietario</span><span>Modificato</span><span>Dimensione</span><span></span></div>
+          <div id="rows"></div>
+          <div id="empty" class="empty">Questa cartella è vuota.</div>
+        </div>
+        <div id="people" class="panel hidden">
+          <div class="people-head"><div><strong>Utenti</strong><small>Gestisci gli accessi</small></div><button id="newUser">＋ Nuovo utente</button></div>
+          <div id="users"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <aside id="preview" class="preview">
+    <div class="preview-head"><div><small>ANTEPRIMA</small><strong id="previewName"></strong></div><button id="closePreview">×</button></div>
+    <div id="viewer" class="viewer"></div>
+    <a id="download" class="download" download>↓ Scarica</a>
+  </aside>
+
+  <div id="modal" class="backdrop">
+    <form id="modalForm" class="modal">
+      <button type="button" id="closeModal">×</button>
+      <small id="modalTag"></small><h2 id="modalTitle"></h2>
+      <div id="modalBody"></div>
+      <div class="modal-actions"><button type="button" id="cancel">Annulla</button><button id="confirm">Conferma</button></div>
+    </form>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
