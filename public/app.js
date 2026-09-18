@@ -13,7 +13,19 @@ let visibleEntries = [];
 let previewEntryIndex = -1;
 let previewObjectUrl = null;
 let previewTouchStartX = null;
+let previewRenderId = 0;
 const selectedEntries = new Map();
+let pdfjsPromise = null;
+
+function getPdfjs() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import('/vendor/pdfjs/pdf.min.mjs').then(pdfjs => {
+      pdfjs.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
+      return pdfjs;
+    });
+  }
+  return pdfjsPromise;
+}
 
 function hasDraggedFiles(event) {
   return [...(event.dataTransfer?.types || [])].includes('Files');
@@ -381,6 +393,7 @@ async function moveEntry(entry, parentId) {
 }
 
 async function preview(entry) {
+  const renderId = ++previewRenderId;
   previewEntryIndex = visibleEntries.findIndex(item => item.id === entry.id);
   $('#previewName').textContent = entry.name;
   const url = `/api/entries/${entry.id}/content`;
@@ -393,8 +406,12 @@ async function preview(entry) {
   $('#download').href = objectUrl;
   $('#download').download = entry.name;
   if (entry.mime_type === 'application/pdf') {
-    $('#viewer').innerHTML = `<iframe title="Anteprima PDF"></iframe>`;
-    $('#viewer iframe').src = objectUrl;
+    $('#viewer').innerHTML = '<div class="pdf-loading">Caricamento PDF…</div>';
+    renderPdf(blob, renderId).catch(error => {
+      if (renderId !== previewRenderId) return;
+      console.error(error);
+      $('#viewer').innerHTML = '<div class="generic"><strong>Anteprima PDF non disponibile</strong><i></i><i></i><i></i><p>Puoi scaricare il documento.</p></div>';
+    });
   } else if (entry.mime_type?.startsWith('image/')) {
     $('#viewer').innerHTML = '<img alt="Anteprima">';
     $('#viewer img').src = objectUrl;
@@ -403,6 +420,34 @@ async function preview(entry) {
   }
   updatePreviewNavigation();
   $('#preview').classList.add('open');
+}
+
+async function renderPdf(blob, renderId) {
+  const pdfjs = await getPdfjs();
+  const document = await pdfjs.getDocument({ data: await blob.arrayBuffer() }).promise;
+  if (renderId !== previewRenderId) return;
+
+  const pages = window.document.createElement('div');
+  pages.className = 'pdf-pages';
+  $('#viewer').replaceChildren(pages);
+
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    if (renderId !== previewRenderId) return;
+    const page = await document.getPage(pageNumber);
+    const original = page.getViewport({ scale: 1 });
+    const availableWidth = Math.max(240, $('#viewer').clientWidth - 24);
+    const cssScale = Math.min(2, availableWidth / original.width);
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    const viewport = page.getViewport({ scale: cssScale * pixelRatio });
+    const canvas = window.document.createElement('canvas');
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    canvas.style.width = `${Math.floor(viewport.width / pixelRatio)}px`;
+    canvas.style.height = `${Math.floor(viewport.height / pixelRatio)}px`;
+    canvas.setAttribute('aria-label', `Pagina ${pageNumber} di ${document.numPages}`);
+    pages.append(canvas);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  }
 }
 
 function updatePreviewNavigation() {
@@ -676,7 +721,10 @@ $('#drive').addEventListener('drop', async event => {
 });
 $('#menu').onclick = () => $('#sidebar').classList.toggle('open');
 $('#logout').onclick = logout;
-$('#closePreview').onclick = () => $('#preview').classList.remove('open');
+$('#closePreview').onclick = () => {
+  previewRenderId += 1;
+  $('#preview').classList.remove('open');
+};
 $('#previousImage').onclick = () => navigatePreview(-1);
 $('#nextImage').onclick = () => navigatePreview(1);
 $('#viewer').addEventListener('touchstart', event => {
@@ -694,6 +742,7 @@ document.addEventListener('keydown', event => {
   if ($('#preview').classList.contains('open') && event.key === 'ArrowLeft') navigatePreview(-1);
   if ($('#preview').classList.contains('open') && event.key === 'ArrowRight') navigatePreview(1);
   if (event.key === 'Escape') {
+    previewRenderId += 1;
     closeModal();
     $('#preview').classList.remove('open');
   }
