@@ -37,6 +37,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:?Imposta JWT_SECRET nel file .env}
       STORAGE_DIR: /data/files
       MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-200}
+      MAX_UPLOAD_CHUNK_MB: ${MAX_UPLOAD_CHUNK_MB:-10}
+      ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-15}
+      REFRESH_TOKEN_DAYS: ${REFRESH_TOKEN_DAYS:-30}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      REQUIRE_HTTPS: ${REQUIRE_HTTPS:-false}
     volumes:
       - file_data:/data/files
     ports:
