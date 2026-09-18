@@ -275,6 +275,36 @@ app.get('/api/entries/:id/content', auth, async (req, res) => {
   res.sendFile(filePath);
 });
 
+app.patch('/api/entries/:id/move', auth, writable, async (req, res) => {
+  const entry = await canAccess(req.params.id, req.user.sub, true);
+  if (!entry || entry.is_trashed) return res.status(404).json({ error: 'Elemento non trovato' });
+  const parentId = req.body.parentId || null;
+  if (parentId === entry.id) return res.status(400).json({ error: 'Una cartella non può contenere sé stessa' });
+  if (parentId) {
+    const destination = await canAccess(parentId, req.user.sub, true);
+    if (!destination || destination.kind !== 'folder' || destination.is_trashed) {
+      return res.status(400).json({ error: 'Cartella di destinazione non valida' });
+    }
+    if (entry.kind === 'folder') {
+      const { rows } = await pool.query(
+        `WITH RECURSIVE descendants AS (
+           SELECT id FROM entries WHERE parent_id = $1
+           UNION ALL
+           SELECT e.id FROM entries e JOIN descendants d ON e.parent_id = d.id
+         )
+         SELECT EXISTS(SELECT 1 FROM descendants WHERE id = $2) AS invalid`,
+        [entry.id, parentId]
+      );
+      if (rows[0].invalid) return res.status(400).json({ error: 'Non puoi spostare una cartella in una sua sottocartella' });
+    }
+  }
+  const { rows } = await pool.query(
+    'UPDATE entries SET parent_id=$1,updated_at=now() WHERE id=$2 RETURNING id,parent_id,name,kind,updated_at',
+    [parentId, entry.id]
+  );
+  res.json(rows[0]);
+});
+
 app.delete('/api/entries/:id', auth, writable, async (req, res) => {
   const entry = await canAccess(req.params.id, req.user.sub, true);
   if (!entry) return res.status(404).json({ error: 'Elemento non trovato' });
