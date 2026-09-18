@@ -5,6 +5,7 @@ let refreshToken = localStorage.getItem('arca_refresh_token');
 let user = null;
 let view = 'files';
 let currentFolder = null;
+let folderHistory = [];
 let searchTimer;
 let draggedEntry = null;
 let uploadInProgress = false;
@@ -189,9 +190,9 @@ async function loadEntries() {
       row.addEventListener('click', event => {
         if (event.target.tagName === 'BUTTON' || view === 'trash') return entryAction(entry);
         if (entry.kind === 'folder') {
+          folderHistory.push(currentFolder);
           currentFolder = entry;
-          $('#breadcrumb').textContent = 'I miei file /';
-          $('#title').textContent = entry.name;
+          updateFolderLocation();
           loadEntries();
         } else {
           preview(entry);
@@ -203,6 +204,19 @@ async function loadEntries() {
     toast(error.message);
   }
 }
+
+function updateFolderLocation() {
+  const insideFolder = Boolean(currentFolder);
+  $('#folderBack').classList.toggle('hidden', !insideFolder);
+  $('#breadcrumb').textContent = insideFolder ? 'I miei file /' : 'Spazio aziendale /';
+  $('#title').textContent = insideFolder ? currentFolder.name : 'I miei file';
+}
+
+$('#folderBack').addEventListener('click', () => {
+  currentFolder = folderHistory.pop() || null;
+  updateFolderLocation();
+  loadEntries();
+});
 
 async function moveEntry(entry, parentId) {
   try {
@@ -408,12 +422,14 @@ $('#newUser').addEventListener('click', () => openModal('NUOVO UTENTE', 'Crea un
 $$('.nav').forEach(button => button.addEventListener('click', () => {
   view = button.dataset.view;
   currentFolder = null;
+  folderHistory = [];
   $$('.nav').forEach(item => item.classList.toggle('active', item === button));
   $('#people').classList.toggle('hidden', view !== 'people');
   $('#drive').classList.toggle('hidden', view === 'people');
   $('#newFolder').classList.toggle('hidden', view !== 'files');
   $('#title').textContent = view === 'files' ? 'I miei file' : view === 'trash' ? 'Cestino' : 'Persone';
   $('#breadcrumb').textContent = 'Spazio aziendale /';
+  $('#folderBack').classList.add('hidden');
   $('#sidebar').classList.remove('open');
   loadEntries();
 }));
