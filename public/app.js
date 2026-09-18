@@ -7,6 +7,7 @@ let view = 'files';
 let currentFolder = null;
 let searchTimer;
 let draggedEntry = null;
+let uploadInProgress = false;
 
 async function api(url, options = {}, retry = true) {
   const headers = { ...(options.headers || {}) };
@@ -321,17 +322,65 @@ $('#newFolder').addEventListener('click', () => openModal('NUOVA CARTELLA', 'Cre
   loadEntries();
 }));
 
+function setUploadProgress(percent, detail = '') {
+  const value = Math.max(0, Math.min(100, Math.round(percent)));
+  $('#uploadProgressPercent').textContent = `${value}%`;
+  $('#uploadProgressDetail').textContent = detail;
+  $('#uploadProgressBar').style.width = `${value}%`;
+  $('.upload-progress-track').setAttribute('aria-valuenow', value);
+}
+
+function sendFiles(form, files, retry = true) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', '/api/files');
+    request.setRequestHeader('Authorization', `Bearer ${token}`);
+    request.responseType = 'json';
+    request.upload.addEventListener('progress', event => {
+      if (!event.lengthComputable) return;
+      const sent = formatSize(event.loaded);
+      const total = formatSize(event.total);
+      setUploadProgress((event.loaded / event.total) * 100, `${files.length} file · ${sent} di ${total}`);
+    });
+    request.addEventListener('load', async () => {
+      if (request.status >= 200 && request.status < 300) return resolve(request.response);
+      if (request.status === 401 && refreshToken && retry) {
+        try {
+          await api('/api/me');
+          return resolve(await sendFiles(form, files, false));
+        } catch {}
+      }
+      reject(new Error(request.response?.error || 'Caricamento non riuscito'));
+    });
+    request.addEventListener('error', () => reject(new Error('Connessione interrotta durante il caricamento')));
+    request.addEventListener('abort', () => reject(new Error('Caricamento annullato')));
+    request.send(form);
+  });
+}
+
 $('#upload').addEventListener('change', async event => {
+  const files = [...event.target.files];
+  if (!files.length || uploadInProgress) return;
   const form = new FormData();
-  [...event.target.files].forEach(file => form.append('files', file));
+  files.forEach(file => form.append('files', file));
   if (currentFolder) form.append('parentId', currentFolder.id);
+  uploadInProgress = true;
+  event.target.disabled = true;
+  $('#uploadProgress').classList.remove('hidden');
+  $('#uploadProgressTitle').textContent = files.length === 1 ? files[0].name : `Caricamento di ${files.length} file`;
+  setUploadProgress(0, 'Preparazione…');
   try {
-    await api('/api/files', { method: 'POST', body: form });
+    await sendFiles(form, files);
+    setUploadProgress(100, 'Completato');
     toast('Caricamento completato');
     loadStorage();
     loadEntries();
   } catch (error) {
     toast(error.message);
+  } finally {
+    uploadInProgress = false;
+    event.target.disabled = false;
+    setTimeout(() => $('#uploadProgress').classList.add('hidden'), 900);
   }
   event.target.value = '';
 });
