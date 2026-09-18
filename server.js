@@ -357,7 +357,8 @@ app.get('/api/entries', auth, async (req, res) => {
   const trash = req.query.trash === 'true';
   const search = String(req.query.q || '').trim();
   const parentId = req.query.parentId || null;
-  const params = [req.user.sub, trash, parentId, search ? `%${search}%` : null];
+  const images = req.query.images === 'true';
+  const params = [req.user.sub, trash, parentId, search ? `%${search}%` : null, images];
   const { rows } = await pool.query(
     `SELECT e.id,e.parent_id,e.name,e.kind,e.mime_type,e.size_bytes,e.is_trashed,e.created_at,e.updated_at,
        u.name AS owner_name, (e.owner_id = $1) AS owned
@@ -366,8 +367,9 @@ app.get('/api/entries', auth, async (req, res) => {
      LEFT JOIN shares s ON s.entry_id=e.id AND s.user_id=$1
      WHERE (e.owner_id=$1 OR s.user_id=$1 OR EXISTS(SELECT 1 FROM users me WHERE me.id=$1 AND me.role='admin'))
        AND e.is_trashed=$2
-       AND ($4::text IS NOT NULL OR e.parent_id IS NOT DISTINCT FROM $3::uuid)
+       AND ($5::boolean OR $4::text IS NOT NULL OR e.parent_id IS NOT DISTINCT FROM $3::uuid)
        AND ($4::text IS NULL OR e.name ILIKE $4)
+       AND (NOT $5::boolean OR (e.kind='file' AND e.mime_type LIKE 'image/%'))
      ORDER BY e.kind DESC, lower(e.name)`,
     params
   );
