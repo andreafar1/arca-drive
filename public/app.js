@@ -142,6 +142,7 @@ async function loadEntries() {
   if (view === 'people') return loadUsers();
   const query = new URLSearchParams();
   if (view === 'trash') query.set('trash', 'true');
+  if (view === 'images') query.set('images', 'true');
   if (currentFolder && view !== 'trash') query.set('parentId', currentFolder.id);
   const q = $('#search').value.trim();
   if (q) query.set('q', q);
@@ -218,7 +219,7 @@ function renderBreadcrumb() {
   breadcrumb.replaceChildren();
   if (view !== 'files') {
     const label = document.createElement('span');
-    label.textContent = 'Spazio aziendale';
+    label.textContent = view === 'images' ? 'Raccolte' : 'Spazio aziendale';
     breadcrumb.append(label);
     return;
   }
@@ -471,7 +472,8 @@ $$('.nav').forEach(button => button.addEventListener('click', () => {
   $('#people').classList.toggle('hidden', view !== 'people');
   $('#drive').classList.toggle('hidden', view === 'people');
   $('#newFolder').classList.toggle('hidden', view !== 'files');
-  $('#title').textContent = view === 'files' ? 'I miei file' : view === 'trash' ? 'Cestino' : 'Persone';
+  $('#title').textContent = view === 'files' ? 'I miei file' : view === 'images' ? 'Immagini' : view === 'trash' ? 'Cestino' : 'Persone';
+  $('#empty').textContent = view === 'images' ? 'Non ci sono ancora immagini.' : view === 'trash' ? 'Il cestino è vuoto.' : 'Questa cartella è vuota.';
   renderBreadcrumb();
   $('#folderBack').classList.add('hidden');
   $('#sidebar').classList.remove('open');
