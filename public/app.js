@@ -5,6 +5,7 @@ let user = null;
 let view = 'files';
 let currentFolder = null;
 let searchTimer;
+let draggedEntry = null;
 
 async function api(url, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -127,8 +128,39 @@ async function loadEntries() {
       </div>`).join('');
     entries.forEach((entry, index) => {
       const row = $$('#rows .file-row')[index];
+      row.draggable = user.role !== 'viewer';
       row.querySelector('.file-name strong').textContent = entry.name;
       row.children[1].textContent = entry.owner_name;
+      row.addEventListener('dragstart', event => {
+        draggedEntry = entry;
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', entry.id);
+        row.classList.add('dragging');
+        if (currentFolder) $('#rootDrop').classList.remove('hidden');
+      });
+      row.addEventListener('dragend', () => {
+        draggedEntry = null;
+        row.classList.remove('dragging');
+        $('#rootDrop').classList.add('hidden');
+        $$('.drop-target').forEach(element => element.classList.remove('drop-target'));
+      });
+      if (entry.kind === 'folder') {
+        row.addEventListener('dragover', event => {
+          if (!draggedEntry || draggedEntry.id === entry.id) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          row.classList.add('drop-target');
+        });
+        row.addEventListener('dragleave', event => {
+          if (!row.contains(event.relatedTarget)) row.classList.remove('drop-target');
+        });
+        row.addEventListener('drop', async event => {
+          event.preventDefault();
+          row.classList.remove('drop-target');
+          if (!draggedEntry || draggedEntry.id === entry.id) return;
+          await moveEntry(draggedEntry, entry.id);
+        });
+      }
       row.addEventListener('click', event => {
         if (event.target.tagName === 'BUTTON' || view === 'trash') return entryAction(entry);
         if (entry.kind === 'folder') {
@@ -142,6 +174,21 @@ async function loadEntries() {
       });
     });
     $('#empty').style.display = entries.length ? 'none' : 'block';
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function moveEntry(entry, parentId) {
+  try {
+    await api(`/api/entries/${entry.id}/move`, {
+      method: 'PATCH',
+      body: JSON.stringify({ parentId })
+    });
+    toast(`“${entry.name}” spostato`);
+    draggedEntry = null;
+    $('#rootDrop').classList.add('hidden');
+    loadEntries();
   } catch (error) {
     toast(error.message);
   }
@@ -267,6 +314,18 @@ $$('.nav').forEach(button => button.addEventListener('click', () => {
 $('#search').addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(loadEntries, 250);
+});
+$('#rootDrop').addEventListener('dragover', event => {
+  if (!draggedEntry) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  $('#rootDrop').classList.add('drop-target');
+});
+$('#rootDrop').addEventListener('dragleave', () => $('#rootDrop').classList.remove('drop-target'));
+$('#rootDrop').addEventListener('drop', async event => {
+  event.preventDefault();
+  $('#rootDrop').classList.remove('drop-target');
+  if (draggedEntry) await moveEntry(draggedEntry, null);
 });
 $('#menu').onclick = () => $('#sidebar').classList.toggle('open');
 $('#logout').onclick = logout;
