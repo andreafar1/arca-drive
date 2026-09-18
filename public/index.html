@@ -30,6 +30,12 @@
         <button class="nav" data-view="trash">♲ Cestino</button>
         <button class="nav admin-only" data-view="people">♙ Persone</button>
       </nav>
+      <div class="storage-summary">
+        <div class="storage-title"><span>Spazio disco</span><strong id="diskPercent">—</strong></div>
+        <div class="storage-track"><i id="diskBar"></i></div>
+        <p><strong id="arcaUsage">—</strong> usati da Arca Drive</p>
+        <small><span id="diskFree">—</span> disponibili · <span id="fileCount">0</span> file</small>
+      </div>
       <div class="account"><span id="initials"></span><div><strong id="userName"></strong><small id="userRole"></small></div></div>
       <button id="logout" class="logout">Esci</button>
     </aside>
