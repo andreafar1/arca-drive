@@ -33,6 +33,19 @@ function formatSize(bytes) {
   return `${(bytes / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
+async function loadStorage() {
+  try {
+    const storage = await api('/api/storage');
+    $('#diskPercent').textContent = `${storage.diskUsedPercent}%`;
+    $('#diskBar').style.width = `${Math.min(storage.diskUsedPercent, 100)}%`;
+    $('#arcaUsage').textContent = formatSize(storage.filesBytes);
+    $('#diskFree').textContent = formatSize(storage.freeBytes);
+    $('#fileCount').textContent = storage.fileCount;
+  } catch {
+    $('#diskPercent').textContent = '—';
+  }
+}
+
 function formatDate(value) {
   return new Intl.DateTimeFormat('it-IT', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
@@ -88,6 +101,7 @@ function showApp() {
   $('.upload').classList.toggle('hidden', user.role === 'viewer');
   $('.upload-top').classList.toggle('hidden', user.role === 'viewer');
   $('#newFolder').classList.toggle('hidden', user.role === 'viewer');
+  loadStorage();
   loadEntries();
 }
 
@@ -179,6 +193,7 @@ function entryAction(entry) {
     openModal('RIPRISTINO', 'Ripristina elemento', `<p>Ripristinare <strong></strong>?</p>`, async () => {
       await api(`/api/entries/${entry.id}/restore`, { method: 'POST' });
       toast('Elemento ripristinato');
+      loadStorage();
       loadEntries();
     });
     $('#modalBody strong').textContent = entry.name;
@@ -187,6 +202,7 @@ function entryAction(entry) {
   openModal('CESTINO', 'Sposta nel cestino', '<p>Spostare questo elemento nel cestino?</p>', async () => {
     await api(`/api/entries/${entry.id}`, { method: 'DELETE' });
     toast('Elemento spostato nel cestino');
+    loadStorage();
     loadEntries();
   });
 }
@@ -207,6 +223,7 @@ $('#upload').addEventListener('change', async event => {
   try {
     await api('/api/files', { method: 'POST', body: form });
     toast('Caricamento completato');
+    loadStorage();
     loadEntries();
   } catch (error) {
     toast(error.message);
