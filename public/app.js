@@ -124,6 +124,7 @@ function showApp() {
   $('.upload').classList.toggle('hidden', user.role === 'viewer');
   $('.upload-top').classList.toggle('hidden', user.role === 'viewer');
   $('#newFolder').classList.toggle('hidden', user.role === 'viewer');
+  updateFolderLocation();
   loadStorage();
   loadEntries();
 }
@@ -208,21 +209,55 @@ async function loadEntries() {
 function updateFolderLocation() {
   const insideFolder = Boolean(currentFolder);
   $('#folderBack').classList.toggle('hidden', !insideFolder);
-  $('#breadcrumb').textContent = insideFolder ? 'I miei file /' : 'Spazio aziendale /';
-  $('#breadcrumb').disabled = !insideFolder;
   $('#title').textContent = insideFolder ? currentFolder.name : 'I miei file';
+  renderBreadcrumb();
+}
+
+function renderBreadcrumb() {
+  const breadcrumb = $('#breadcrumb');
+  breadcrumb.replaceChildren();
+  if (view !== 'files') {
+    const label = document.createElement('span');
+    label.textContent = 'Spazio aziendale';
+    breadcrumb.append(label);
+    return;
+  }
+
+  const folders = folderHistory.filter(Boolean);
+  const levels = [{ name: 'I miei file', folder: null }, ...folders.map(folder => ({ name: folder.name, folder }))];
+  if (currentFolder) levels.push({ name: currentFolder.name, folder: currentFolder });
+
+  levels.forEach((level, index) => {
+    const isCurrent = index === levels.length - 1;
+    const item = document.createElement(isCurrent ? 'span' : 'button');
+    item.textContent = level.name;
+    if (!isCurrent) {
+      item.type = 'button';
+      item.addEventListener('click', () => {
+        if (level.folder === null) {
+          currentFolder = null;
+          folderHistory = [];
+        } else {
+          const targetIndex = folders.findIndex(folder => folder.id === level.folder.id);
+          currentFolder = level.folder;
+          folderHistory = [null, ...folders.slice(0, targetIndex)];
+        }
+        updateFolderLocation();
+        loadEntries();
+      });
+    }
+    breadcrumb.append(item);
+    if (!isCurrent) {
+      const separator = document.createElement('span');
+      separator.className = 'breadcrumb-separator';
+      separator.textContent = '/';
+      breadcrumb.append(separator);
+    }
+  });
 }
 
 $('#folderBack').addEventListener('click', () => {
   currentFolder = folderHistory.pop() || null;
-  updateFolderLocation();
-  loadEntries();
-});
-
-$('#breadcrumb').addEventListener('click', () => {
-  if (view !== 'files' || !currentFolder) return;
-  currentFolder = null;
-  folderHistory = [];
   updateFolderLocation();
   loadEntries();
 });
@@ -437,8 +472,7 @@ $$('.nav').forEach(button => button.addEventListener('click', () => {
   $('#drive').classList.toggle('hidden', view === 'people');
   $('#newFolder').classList.toggle('hidden', view !== 'files');
   $('#title').textContent = view === 'files' ? 'I miei file' : view === 'trash' ? 'Cestino' : 'Persone';
-  $('#breadcrumb').textContent = 'Spazio aziendale /';
-  $('#breadcrumb').disabled = true;
+  renderBreadcrumb();
   $('#folderBack').classList.add('hidden');
   $('#sidebar').classList.remove('open');
   loadEntries();
