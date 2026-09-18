@@ -1,35 +1,55 @@
 # Arca Drive
 
-Prototipo navigabile di un file manager aziendale, distribuibile su Ubuntu con Docker Compose.
+Arca Drive è un file manager aziendale self-hosted per Ubuntu, distribuito con Docker Compose.
 
-> Questa versione è un prototipo front-end: i file caricati restano nella memoria del browser e vengono persi ricaricando la pagina. Non è ancora la versione server con database e storage permanente.
+## Funzioni
+
+- configurazione del primo amministratore;
+- accesso tramite email e password;
+- creazione di utenti con ruoli amministratore, collaboratore o visualizzatore;
+- upload e download persistenti;
+- cartelle, ricerca, cestino e ripristino;
+- anteprima nel browser di PDF e immagini;
+- PostgreSQL per utenti e metadati;
+- volume Docker separato per i documenti.
 
 ## Requisiti
 
-- Ubuntu Server 22.04 o successivo
-- Docker Engine
-- Docker Compose v2
-- Porta 8080 disponibile
+- Ubuntu Server 22.04 o successivo;
+- Docker Engine e Docker Compose v2;
+- Git;
+- almeno 2 GB di RAM;
+- spazio disco adeguato ai documenti.
 
-## Installazione rapida
+## Installazione
 
 ```bash
 git clone https://github.com/andreafar1/arca-drive.git
 cd arca-drive
-docker compose up -d
+cp .env.example .env
 ```
 
-Apri `http://IP_DEL_SERVER:8080`.
-
-## Comandi utili
+Genera due valori casuali:
 
 ```bash
-docker compose ps
-docker compose logs -f
-docker compose pull
-docker compose up -d
-docker compose down
+openssl rand -base64 36
+openssl rand -base64 48
 ```
+
+Inserisci il primo come `POSTGRES_PASSWORD` e il secondo come `JWT_SECRET` nel file `.env`:
+
+```bash
+nano .env
+```
+
+Avvia l'applicazione:
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+Apri `http://IP_DEL_SERVER:8080`. Al primo accesso verrà richiesto di creare l'amministratore iniziale.
 
 ## Aggiornamento
 
@@ -38,20 +58,31 @@ git pull
 docker compose up -d --build
 ```
 
-## HTTPS
+## Backup
 
-Per uso in rete pubblica, pubblica il servizio dietro un reverse proxy HTTPS come Caddy, Nginx Proxy Manager o Traefik. Non esporre il prototipo direttamente a Internet.
+Backup del database:
 
-## Funzioni incluse
+```bash
+docker compose exec -T db pg_dump -U arca_drive -d arca_drive | gzip > arca-drive-db-$(date +%F).sql.gz
+```
 
-- navigazione tra file e cartelle;
-- caricamento simulato;
-- ricerca;
-- anteprima PDF con PDF.js;
-- cestino e ripristino;
-- area utenti e permessi dimostrativa;
-- pannello sincronizzazione desktop dimostrativo.
+Backup dei documenti:
 
-## Passaggio alla versione server
+```bash
+docker run --rm -v arca-drive_file_data:/data -v "$PWD":/backup alpine +  tar czf /backup/arca-drive-files-$(date +%F).tar.gz -C /data .
+```
 
-La versione server richiederà autenticazione reale, PostgreSQL, storage persistente, autorizzazioni lato server, backup e scansione dei file.
+Conserva i backup su un disco o sistema diverso dal server.
+
+## Ripristino
+
+Il ripristino deve includere sia PostgreSQL sia il volume `file_data`. I soli metadati o i soli documenti non costituiscono un backup completo.
+
+## Sicurezza
+
+- non pubblicare il file `.env`;
+- usa HTTPS tramite un reverse proxy;
+- non esporre la porta PostgreSQL;
+- aggiorna regolarmente immagini e sistema operativo;
+- pianifica backup automatici;
+- questa prima versione non include ancora antivirus, versionamento dei file o recupero password via email.
