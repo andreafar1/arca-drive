@@ -9,6 +9,10 @@ let folderHistory = [];
 let searchTimer;
 let draggedEntry = null;
 let uploadInProgress = false;
+let visibleEntries = [];
+let previewEntryIndex = -1;
+let previewObjectUrl = null;
+let previewTouchStartX = null;
 
 function hasDraggedFiles(event) {
   return [...(event.dataTransfer?.types || [])].includes('Files');
@@ -152,6 +156,7 @@ async function loadEntries() {
   if (q) query.set('q', q);
   try {
     const entries = await api(`/api/entries?${query}`);
+    visibleEntries = entries;
     $('#rows').innerHTML = entries.map(entry => `
       <div class="file-row" data-id="${entry.id}">
         <div class="file-name"><i class="${entry.kind === 'file' ? (entry.mime_type?.includes('pdf') ? 'pdf' : entry.mime_type?.startsWith('image/') ? 'image' : '') : ''}">${entry.kind === 'folder' ? '▰' : entry.mime_type?.includes('pdf') ? 'PDF' : entry.mime_type?.startsWith('image/') ? 'IMG' : 'DOC'}</i><strong></strong></div>
@@ -296,12 +301,15 @@ async function moveEntry(entry, parentId) {
 }
 
 async function preview(entry) {
+  previewEntryIndex = visibleEntries.findIndex(item => item.id === entry.id);
   $('#previewName').textContent = entry.name;
   const url = `/api/entries/${entry.id}/content`;
   const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!response.ok) return toast('Impossibile aprire il file');
   const blob = await response.blob();
+  if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
   const objectUrl = URL.createObjectURL(blob);
+  previewObjectUrl = objectUrl;
   $('#download').href = objectUrl;
   $('#download').download = entry.name;
   if (entry.mime_type === 'application/pdf') {
@@ -313,7 +321,23 @@ async function preview(entry) {
   } else {
     $('#viewer').innerHTML = '<div class="generic"><strong>Anteprima non disponibile</strong><i></i><i></i><i></i><p>Puoi scaricare il documento.</p></div>';
   }
+  updatePreviewNavigation();
   $('#preview').classList.add('open');
+}
+
+function updatePreviewNavigation() {
+  const showGallery = view === 'images' && visibleEntries.length > 1 && previewEntryIndex >= 0;
+  $('#previewNav').classList.toggle('hidden', !showGallery);
+  if (!showGallery) return;
+  $('#previewCounter').textContent = `${previewEntryIndex + 1} di ${visibleEntries.length}`;
+  $('#previousImage').disabled = previewEntryIndex === 0;
+  $('#nextImage').disabled = previewEntryIndex === visibleEntries.length - 1;
+}
+
+function navigatePreview(direction) {
+  const nextIndex = previewEntryIndex + direction;
+  if (view !== 'images' || nextIndex < 0 || nextIndex >= visibleEntries.length) return;
+  preview(visibleEntries[nextIndex]);
 }
 
 function openModal(tag, title, body, submit) {
@@ -568,8 +592,22 @@ $('#drive').addEventListener('drop', async event => {
 $('#menu').onclick = () => $('#sidebar').classList.toggle('open');
 $('#logout').onclick = logout;
 $('#closePreview').onclick = () => $('#preview').classList.remove('open');
+$('#previousImage').onclick = () => navigatePreview(-1);
+$('#nextImage').onclick = () => navigatePreview(1);
+$('#viewer').addEventListener('touchstart', event => {
+  previewTouchStartX = event.changedTouches[0]?.clientX ?? null;
+}, { passive: true });
+$('#viewer').addEventListener('touchend', event => {
+  if (previewTouchStartX === null) return;
+  const distance = (event.changedTouches[0]?.clientX ?? previewTouchStartX) - previewTouchStartX;
+  previewTouchStartX = null;
+  if (Math.abs(distance) < 45) return;
+  navigatePreview(distance < 0 ? 1 : -1);
+}, { passive: true });
 $('#closeModal').onclick = $('#cancel').onclick = closeModal;
 document.addEventListener('keydown', event => {
+  if ($('#preview').classList.contains('open') && event.key === 'ArrowLeft') navigatePreview(-1);
+  if ($('#preview').classList.contains('open') && event.key === 'ArrowRight') navigatePreview(1);
   if (event.key === 'Escape') {
     closeModal();
     $('#preview').classList.remove('open');
