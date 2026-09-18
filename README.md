@@ -12,6 +12,9 @@ Arca Drive è un file manager aziendale self-hosted per Ubuntu, distribuito con 
 - anteprima nel browser di PDF e immagini;
 - PostgreSQL per utenti e metadati;
 - volume Docker separato per i documenti.
+- sessioni per dispositivo con refresh token ruotati e revocabili;
+- sincronizzazione incrementale tramite cursore;
+- upload riprendibile per client mobili e file grandi.
 
 ## Requisiti
 
@@ -86,3 +89,12 @@ Il ripristino deve includere sia PostgreSQL sia il volume `file_data`. I soli me
 - aggiorna regolarmente immagini e sistema operativo;
 - pianifica backup automatici;
 - questa prima versione non include ancora antivirus, versionamento dei file o recupero password via email.
+
+## Client mobili
+
+Le API per Android sono documentate in [docs/mobile-api.md](docs/mobile-api.md). Prima di collegare dispositivi esterni, configura un reverse proxy HTTPS e imposta:
+
+```env
+TRUST_PROXY=true
+REQUIRE_HTTPS=true
+```
