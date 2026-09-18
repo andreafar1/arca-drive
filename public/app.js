@@ -154,7 +154,7 @@ async function loadEntries() {
     const entries = await api(`/api/entries?${query}`);
     $('#rows').innerHTML = entries.map(entry => `
       <div class="file-row" data-id="${entry.id}">
-        <div class="file-name"><i class="${entry.kind === 'file' ? (entry.mime_type?.includes('pdf') ? 'pdf' : entry.mime_type?.startsWith('image/') ? 'image' : '') : ''}">${entry.kind === 'folder' ? '▰' : entry.mime_type?.includes('pdf') ? 'PDF' : 'DOC'}</i><strong></strong></div>
+        <div class="file-name"><i class="${entry.kind === 'file' ? (entry.mime_type?.includes('pdf') ? 'pdf' : entry.mime_type?.startsWith('image/') ? 'image' : '') : ''}">${entry.kind === 'folder' ? '▰' : entry.mime_type?.includes('pdf') ? 'PDF' : entry.mime_type?.startsWith('image/') ? 'IMG' : 'DOC'}</i><strong></strong></div>
         <span></span><span>${formatDate(entry.updated_at)}</span><span>${formatSize(Number(entry.size_bytes))}</span>
         <button aria-label="Azioni">•••</button>
       </div>`).join('');
