@@ -206,6 +206,12 @@
   background: #fff7f8;
 }
 
+.modal-actions button.danger-confirm {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+}
+
 .upload-progress {
   position: fixed;
   right: 24px;
