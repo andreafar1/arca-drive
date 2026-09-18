@@ -86,6 +86,7 @@ function showApp() {
   $('#initials').textContent = user.name.split(/\s+/).map(x => x[0]).join('').slice(0, 2).toUpperCase();
   $$('.admin-only').forEach(element => element.classList.toggle('hidden', user.role !== 'admin'));
   $('.upload').classList.toggle('hidden', user.role === 'viewer');
+  $('.upload-top').classList.toggle('hidden', user.role === 'viewer');
   $('#newFolder').classList.toggle('hidden', user.role === 'viewer');
   loadEntries();
 }
