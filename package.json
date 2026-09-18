@@ -1,0 +1,20 @@
+{
+  "name": "arca-drive",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check public/app.js"
+  },
+  "dependencies": {
+    "bcryptjs": "3.0.2",
+    "express": "5.1.0",
+    "jsonwebtoken": "9.0.2",
+    "multer": "2.4.0",
+    "pg": "8.16.3"
+  }
+}
