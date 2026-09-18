@@ -219,6 +219,8 @@ function openModal(tag, title, body, submit) {
   $('#modalTag').textContent = tag;
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = body;
+  $('#confirm').classList.remove('hidden');
+  $('#confirm').textContent = 'Conferma';
   $('#modalForm').onsubmit = async event => {
     event.preventDefault();
     try {
@@ -246,12 +248,44 @@ function entryAction(entry) {
     $('#modalBody strong').textContent = entry.name;
     return;
   }
-  openModal('CESTINO', 'Sposta nel cestino', '<p>Spostare questo elemento nel cestino?</p>', async () => {
+  openModal('AZIONI', entry.name, `
+    <div class="action-list">
+      <button type="button" id="chooseMove"><span>↪</span><div><strong>Sposta in un’altra cartella</strong><small>Scegli una nuova posizione</small></div></button>
+      <button type="button" id="chooseTrash" class="danger"><span>♲</span><div><strong>Sposta nel cestino</strong><small>Potrai ripristinarlo in seguito</small></div></button>
+    </div>`, async () => {});
+  $('#confirm').classList.add('hidden');
+  $('#chooseMove').onclick = () => chooseDestination(entry);
+  $('#chooseTrash').onclick = () => confirmTrash(entry);
+}
+
+async function chooseDestination(entry) {
+  try {
+    const folders = await api('/api/folders');
+    openModal('SPOSTA', 'Scegli la destinazione', '<label class="field">Cartella<select id="destination"><option value="">I miei file</option></select></label>', async () => {
+      const parentId = $('#destination').value || null;
+      await moveEntry(entry, parentId);
+    });
+    const select = $('#destination');
+    folders.filter(folder => folder.id !== entry.id).forEach(folder => {
+      const option = document.createElement('option');
+      option.value = folder.id;
+      option.textContent = folder.name;
+      if (folder.id === entry.parent_id) option.disabled = true;
+      select.append(option);
+    });
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function confirmTrash(entry) {
+  openModal('CESTINO', 'Sposta nel cestino', '<p>Spostare <strong></strong> nel cestino?</p>', async () => {
     await api(`/api/entries/${entry.id}`, { method: 'DELETE' });
     toast('Elemento spostato nel cestino');
     loadStorage();
     loadEntries();
   });
+  $('#modalBody strong').textContent = entry.name;
 }
 
 $('#newFolder').addEventListener('click', () => openModal('NUOVA CARTELLA', 'Crea una cartella', '<label class="field">Nome<input id="folderName" required maxlength="255"></label>', async () => {
