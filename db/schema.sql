@@ -40,3 +40,48 @@ CREATE TABLE IF NOT EXISTS shares (
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (entry_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS device_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  refresh_token_hash text NOT NULL UNIQUE,
+  device_name text NOT NULL DEFAULT 'Dispositivo sconosciuto',
+  platform text NOT NULL DEFAULT 'web',
+  last_ip text,
+  user_agent text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_used_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  revoked_at timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS device_sessions_user_idx ON device_sessions(user_id);
+CREATE INDEX IF NOT EXISTS device_sessions_expiry_idx ON device_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS changes (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  entry_id uuid,
+  action text NOT NULL CHECK (action IN ('created', 'updated', 'moved', 'trashed', 'restored', 'deleted')),
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS changes_user_cursor_idx ON changes(user_id, id);
+
+CREATE TABLE IF NOT EXISTS upload_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  parent_id uuid REFERENCES entries(id) ON DELETE SET NULL,
+  name text NOT NULL,
+  mime_type text NOT NULL DEFAULT 'application/octet-stream',
+  total_bytes bigint NOT NULL CHECK (total_bytes > 0),
+  received_bytes bigint NOT NULL DEFAULT 0 CHECK (received_bytes >= 0),
+  storage_name text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS upload_sessions_owner_idx ON upload_sessions(owner_id);
+CREATE INDEX IF NOT EXISTS upload_sessions_expiry_idx ON upload_sessions(expires_at);
