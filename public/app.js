@@ -10,6 +10,10 @@ let searchTimer;
 let draggedEntry = null;
 let uploadInProgress = false;
 
+function hasDraggedFiles(event) {
+  return [...(event.dataTransfer?.types || [])].includes('Files');
+}
+
 async function api(url, options = {}, retry = true) {
   const headers = { ...(options.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -174,6 +178,13 @@ async function loadEntries() {
       });
       if (entry.kind === 'folder') {
         row.addEventListener('dragover', event => {
+          if (hasDraggedFiles(event)) {
+            if (user.role === 'viewer') return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+            row.classList.add('drop-target');
+            return;
+          }
           if (!draggedEntry || draggedEntry.id === entry.id) return;
           event.preventDefault();
           event.dataTransfer.dropEffect = 'move';
@@ -184,7 +195,13 @@ async function loadEntries() {
         });
         row.addEventListener('drop', async event => {
           event.preventDefault();
+          event.stopPropagation();
           row.classList.remove('drop-target');
+          const files = [...event.dataTransfer.files];
+          if (files.length) {
+            if (user.role !== 'viewer') await uploadFiles(files, entry.id);
+            return;
+          }
           if (!draggedEntry || draggedEntry.id === entry.id) return;
           await moveEntry(draggedEntry, entry.id);
         });
@@ -417,14 +434,13 @@ function sendFiles(form, files, retry = true) {
   });
 }
 
-$('#upload').addEventListener('change', async event => {
-  const files = [...event.target.files];
+async function uploadFiles(files, parentId = currentFolder?.id || null) {
   if (!files.length || uploadInProgress) return;
   const form = new FormData();
   files.forEach(file => form.append('files', file));
-  if (currentFolder) form.append('parentId', currentFolder.id);
+  if (parentId) form.append('parentId', parentId);
   uploadInProgress = true;
-  event.target.disabled = true;
+  $('#upload').disabled = true;
   $('#uploadProgress').classList.remove('hidden');
   $('#uploadProgressTitle').textContent = files.length === 1 ? files[0].name : `Caricamento di ${files.length} file`;
   setUploadProgress(0, 'Preparazione…');
@@ -438,9 +454,13 @@ $('#upload').addEventListener('change', async event => {
     toast(error.message);
   } finally {
     uploadInProgress = false;
-    event.target.disabled = false;
+    $('#upload').disabled = false;
     setTimeout(() => $('#uploadProgress').classList.add('hidden'), 900);
   }
+}
+
+$('#upload').addEventListener('change', async event => {
+  await uploadFiles([...event.target.files]);
   event.target.value = '';
 });
 
@@ -495,6 +515,31 @@ $('#rootDrop').addEventListener('drop', async event => {
   event.preventDefault();
   $('#rootDrop').classList.remove('drop-target');
   if (draggedEntry) await moveEntry(draggedEntry, null);
+});
+document.addEventListener('dragover', event => {
+  if (hasDraggedFiles(event)) event.preventDefault();
+});
+document.addEventListener('drop', event => {
+  if (event.dataTransfer?.files.length) {
+    event.preventDefault();
+    $('#drive').classList.remove('external-drop-target');
+  }
+});
+$('#drive').addEventListener('dragover', event => {
+  if (!hasDraggedFiles(event) || user.role === 'viewer') return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'copy';
+  $('#drive').classList.add('external-drop-target');
+});
+$('#drive').addEventListener('dragleave', event => {
+  if (!$('#drive').contains(event.relatedTarget)) $('#drive').classList.remove('external-drop-target');
+});
+$('#drive').addEventListener('drop', async event => {
+  const files = [...event.dataTransfer.files];
+  if (!files.length) return;
+  event.preventDefault();
+  $('#drive').classList.remove('external-drop-target');
+  if (user.role !== 'viewer') await uploadFiles(files);
 });
 $('#menu').onclick = () => $('#sidebar').classList.toggle('open');
 $('#logout').onclick = logout;
