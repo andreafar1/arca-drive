@@ -1,15 +1,51 @@
 services:
-  arca-drive:
+  db:
+    image: postgres:17.11-bookworm
+    container_name: arca-drive-db
+    restart: unless-stopped
+    shm_size: 128mb
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-arca_drive}
+      POSTGRES_USER: ${POSTGRES_USER:-arca_drive}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Imposta POSTGRES_PASSWORD nel file .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-arca_drive} -d ${POSTGRES_DB:-arca_drive}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - arca_internal
+
+  app:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: arca-drive
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-arca_drive}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-arca_drive}
+      JWT_SECRET: ${JWT_SECRET:?Imposta JWT_SECRET nel file .env}
+      STORAGE_DIR: /data/files
+      MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-200}
+    volumes:
+      - file_data:/data/files
     ports:
-      - "${ARCA_DRIVE_PORT:-8080}:80"
+      - "${ARCA_DRIVE_PORT:-8080}:3000"
     security_opt:
       - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /var/cache/nginx
-      - /var/run
+    networks:
+      - arca_internal
+
+volumes:
+  postgres_data:
+  file_data:
+
+networks:
+  arca_internal:
+    driver: bridge
