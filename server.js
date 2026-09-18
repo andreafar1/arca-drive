@@ -181,7 +181,7 @@ app.get('/api/entries', auth, async (req, res) => {
   const parentId = req.query.parentId || null;
   const params = [req.user.sub, trash, parentId, search ? `%${search}%` : null];
   const { rows } = await pool.query(
-    `SELECT DISTINCT e.id,e.parent_id,e.name,e.kind,e.mime_type,e.size_bytes,e.is_trashed,e.created_at,e.updated_at,
+    `SELECT e.id,e.parent_id,e.name,e.kind,e.mime_type,e.size_bytes,e.is_trashed,e.created_at,e.updated_at,
        u.name AS owner_name, (e.owner_id = $1) AS owned
      FROM entries e
      JOIN users u ON u.id=e.owner_id
