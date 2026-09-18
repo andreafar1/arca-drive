@@ -152,6 +152,24 @@ app.get('/api/me', auth, async (req, res) => {
   res.json(rows[0]);
 });
 
+app.get('/api/storage', auth, async (_req, res) => {
+  const [{ rows }, stats] = await Promise.all([
+    pool.query("SELECT COALESCE(SUM(size_bytes), 0)::bigint AS files_bytes, COUNT(*)::int AS file_count FROM entries WHERE kind='file'"),
+    fs.statfs(STORAGE_DIR)
+  ]);
+  const totalBytes = Number(stats.blocks) * Number(stats.bsize);
+  const freeBytes = Number(stats.bavail) * Number(stats.bsize);
+  const diskUsedBytes = Math.max(0, totalBytes - freeBytes);
+  res.json({
+    filesBytes: Number(rows[0].files_bytes),
+    fileCount: rows[0].file_count,
+    totalBytes,
+    freeBytes,
+    diskUsedBytes,
+    diskUsedPercent: totalBytes ? Math.round((diskUsedBytes / totalBytes) * 1000) / 10 : 0
+  });
+});
+
 app.get('/api/users', auth, admin, async (_req, res) => {
   const { rows } = await pool.query('SELECT id,email,name,role,created_at FROM users ORDER BY name');
   res.json(rows);
