@@ -29,6 +29,26 @@
   background: #f0fbf7;
 }
 
+.breadcrumb-link {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.breadcrumb-link:not(:disabled):hover {
+  color: #168e75;
+  text-decoration: underline;
+}
+
+.breadcrumb-link:disabled {
+  cursor: default;
+}
+
 .upload-top {
   display: inline-flex;
   align-items: center;
