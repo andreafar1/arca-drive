@@ -321,6 +321,7 @@ function openModal(tag, title, body, submit) {
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = body;
   $('#confirm').classList.remove('hidden');
+  $('#confirm').classList.remove('danger-confirm');
   $('#confirm').textContent = 'Conferma';
   $('#modalForm').onsubmit = async event => {
     event.preventDefault();
@@ -340,13 +341,14 @@ function closeModal() {
 
 function entryAction(entry) {
   if (view === 'trash') {
-    openModal('RIPRISTINO', 'Ripristina elemento', `<p>Ripristinare <strong></strong>?</p>`, async () => {
-      await api(`/api/entries/${entry.id}/restore`, { method: 'POST' });
-      toast('Elemento ripristinato');
-      loadStorage();
-      loadEntries();
-    });
-    $('#modalBody strong').textContent = entry.name;
+    openModal('CESTINO', entry.name, `
+      <div class="action-list">
+        <button type="button" id="chooseRestore"><span>↶</span><div><strong>Ripristina</strong><small>Riporta l’elemento nella posizione originale</small></div></button>
+        <button type="button" id="choosePermanentDelete" class="danger"><span>×</span><div><strong>Elimina definitivamente</strong><small>Questa operazione non può essere annullata</small></div></button>
+      </div>`, async () => {});
+    $('#confirm').classList.add('hidden');
+    $('#chooseRestore').onclick = () => confirmRestore(entry);
+    $('#choosePermanentDelete').onclick = () => confirmPermanentDelete(entry);
     return;
   }
   openModal('AZIONI', entry.name, `
@@ -357,6 +359,28 @@ function entryAction(entry) {
   $('#confirm').classList.add('hidden');
   $('#chooseMove').onclick = () => chooseDestination(entry);
   $('#chooseTrash').onclick = () => confirmTrash(entry);
+}
+
+function confirmRestore(entry) {
+  openModal('RIPRISTINO', 'Ripristina elemento', '<p>Ripristinare <strong></strong>?</p>', async () => {
+    await api(`/api/entries/${entry.id}/restore`, { method: 'POST' });
+    toast('Elemento ripristinato');
+    loadStorage();
+    loadEntries();
+  });
+  $('#modalBody strong').textContent = entry.name;
+}
+
+function confirmPermanentDelete(entry) {
+  openModal('ELIMINAZIONE DEFINITIVA', 'Elimina definitivamente', '<p>Eliminare definitivamente <strong></strong>? L’operazione non può essere annullata.</p>', async () => {
+    await api(`/api/entries/${entry.id}/permanent`, { method: 'DELETE' });
+    toast('Elemento eliminato definitivamente');
+    loadStorage();
+    loadEntries();
+  });
+  $('#modalBody strong').textContent = entry.name;
+  $('#confirm').textContent = 'Elimina definitivamente';
+  $('#confirm').classList.add('danger-confirm');
 }
 
 async function chooseDestination(entry) {
