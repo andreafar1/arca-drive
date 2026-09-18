@@ -212,6 +212,42 @@
   color: #fff;
 }
 
+.preview-nav {
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.preview-nav button {
+  width: 44px;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 19px;
+  cursor: pointer;
+}
+
+.preview-nav button:hover:not(:disabled) {
+  border-color: var(--mint);
+  background: #f0fbf7;
+}
+
+.preview-nav button:disabled {
+  opacity: .35;
+  cursor: default;
+}
+
+.preview-nav span {
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .upload-progress {
   position: fixed;
   right: 24px;
