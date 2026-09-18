@@ -57,8 +57,16 @@
           </div>
         </div>
         <div id="rootDrop" class="root-drop hidden">↖ Rilascia qui per spostare in “I miei file”</div>
+        <div id="bulkActions" class="bulk-actions hidden">
+          <strong><span id="selectedCount">0</span> selezionati</strong>
+          <div>
+            <button id="bulkMove" type="button">↪ Sposta</button>
+            <button id="bulkTrash" type="button" class="danger">♲ Cestino</button>
+            <button id="clearSelection" type="button" aria-label="Annulla selezione">×</button>
+          </div>
+        </div>
         <div id="drive" class="panel">
-          <div class="table-head"><span>Nome</span><span>Proprietario</span><span>Modificato</span><span>Dimensione</span><span></span></div>
+          <div class="table-head"><span><input id="selectAll" type="checkbox" aria-label="Seleziona tutti"></span><span>Nome</span><span>Proprietario</span><span>Modificato</span><span>Dimensione</span><span></span></div>
           <div id="rows"></div>
           <div id="empty" class="empty">Questa cartella è vuota.</div>
         </div>
