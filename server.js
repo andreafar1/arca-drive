@@ -47,6 +47,25 @@ for (let attempt = 1; attempt <= 30; attempt++) {
 const expiredUploads = await pool.query("DELETE FROM upload_sessions WHERE expires_at<=now() RETURNING storage_name");
 await Promise.all(expiredUploads.rows.map(row => fs.unlink(path.join(STORAGE_DIR, row.storage_name)).catch(() => {})));
 await pool.query("DELETE FROM device_sessions WHERE expires_at<=now() OR revoked_at<now()-interval '30 days'");
+await pool.query(
+  `UPDATE entries candidate SET is_system=true
+   WHERE candidate.id IN (
+     SELECT DISTINCT ON (owner_id) id
+     FROM entries
+     WHERE name='Immagini' AND kind='folder' AND parent_id IS NULL AND is_trashed=false
+     ORDER BY owner_id,created_at
+   )
+   AND NOT EXISTS (
+     SELECT 1 FROM entries system_folder
+     WHERE system_folder.owner_id=candidate.owner_id AND system_folder.is_system=true
+       AND system_folder.name='Immagini' AND system_folder.parent_id IS NULL
+   )`
+);
+await pool.query(
+  `INSERT INTO entries(owner_id,name,kind,is_system)
+   SELECT id,'Immagini','folder',true FROM users
+   ON CONFLICT (owner_id) WHERE is_system=true AND name='Immagini' AND parent_id IS NULL DO NOTHING`
+);
 
 const app = express();
 app.disable('x-powered-by');
@@ -135,6 +154,18 @@ function cleanName(value) {
   return name;
 }
 
+async function ensureImagesFolder(userId, db = pool) {
+  const { rows } = await db.query(
+    `INSERT INTO entries(owner_id,name,kind,is_system)
+     VALUES($1,'Immagini','folder',true)
+     ON CONFLICT (owner_id) WHERE is_system=true AND name='Immagini' AND parent_id IS NULL
+     DO UPDATE SET name=EXCLUDED.name
+     RETURNING id`,
+    [userId]
+  );
+  return rows[0].id;
+}
+
 async function recordChange(db, entryId, action, payload = {}) {
   await db.query(
     `INSERT INTO changes(user_id,entry_id,action,payload)
@@ -194,6 +225,7 @@ app.post('/api/setup', async (req, res) => {
       [email, name, hash]
     );
     await client.query('COMMIT');
+    await ensureImagesFolder(rows[0].id);
     res.status(201).json(await createSession(rows[0], req, req.body));
   } catch (error) {
     await client.query('ROLLBACK');
@@ -316,7 +348,7 @@ app.get('/api/changes', auth, async (req, res) => {
 app.get('/api/sync/bootstrap', auth, async (req, res) => {
   const [entriesResult, cursorResult] = await Promise.all([
     pool.query(
-      `SELECT DISTINCT e.id,e.parent_id,e.name,e.kind,e.mime_type,e.size_bytes,e.is_trashed,e.created_at,e.updated_at,
+      `SELECT DISTINCT e.id,e.parent_id,e.name,e.kind,e.mime_type,e.size_bytes,e.is_system,e.is_trashed,e.created_at,e.updated_at,
          u.name AS owner_name,(e.owner_id=$1) AS owned
        FROM entries e
        JOIN users u ON u.id=e.owner_id
@@ -347,6 +379,7 @@ app.post('/api/users', auth, admin, async (req, res) => {
       'INSERT INTO users(email,name,password_hash,role) VALUES($1,$2,$3,$4) RETURNING id,email,name,role,created_at',
       [email, name, hash, role]
     );
+    await ensureImagesFolder(rows[0].id);
     res.status(201).json(rows[0]);
   } catch (error) {
     res.status(400).json({ error: error.code === '23505' ? 'Email già utilizzata' : error.message });
@@ -360,7 +393,7 @@ app.get('/api/entries', auth, async (req, res) => {
   const images = req.query.images === 'true';
   const params = [req.user.sub, trash, parentId, search ? `%${search}%` : null, images];
   const { rows } = await pool.query(
-    `SELECT e.id,e.parent_id,e.name,e.kind,e.mime_type,e.size_bytes,e.is_trashed,e.created_at,e.updated_at,
+    `SELECT e.id,e.parent_id,e.name,e.kind,e.mime_type,e.size_bytes,e.is_system,e.is_trashed,e.created_at,e.updated_at,
        u.name AS owner_name, (e.owner_id = $1) AS owned
      FROM entries e
      JOIN users u ON u.id=e.owner_id
@@ -393,7 +426,11 @@ app.post('/api/folders', auth, writable, async (req, res) => {
   try {
     const name = cleanName(req.body.name);
     const parentId = req.body.parentId || null;
-    if (parentId && !(await canAccess(parentId, req.user.sub, true))) return res.status(403).json({ error: 'Cartella non accessibile' });
+    if (parentId) {
+      const parent = await canAccess(parentId, req.user.sub, true);
+      if (!parent) return res.status(403).json({ error: 'Cartella non accessibile' });
+      if (parent.is_system) return res.status(400).json({ error: 'La cartella Immagini può contenere solo immagini' });
+    }
     const { rows } = await pool.query(
       'INSERT INTO entries(parent_id,owner_id,name,kind) VALUES($1,$2,$3,\'folder\') RETURNING *',
       [parentId, req.user.sub, name]
@@ -543,10 +580,24 @@ const upload = multer({
 });
 
 app.post('/api/files', auth, writable, upload.array('files', 20), async (req, res) => {
-  const parentId = req.body.parentId || null;
-  if (parentId && !(await canAccess(parentId, req.user.sub, true))) {
-    await Promise.all((req.files || []).map(file => fs.unlink(file.path).catch(() => {})));
-    return res.status(403).json({ error: 'Cartella non accessibile' });
+  let parentId = req.body.parentId || null;
+  if (req.body.collection === 'images') {
+    if ((req.files || []).some(file => !file.mimetype.startsWith('image/'))) {
+      await Promise.all((req.files || []).map(file => fs.unlink(file.path).catch(() => {})));
+      return res.status(400).json({ error: 'Nella raccolta Immagini puoi caricare solo immagini' });
+    }
+    parentId = await ensureImagesFolder(req.user.sub);
+  }
+  if (parentId) {
+    const parent = await canAccess(parentId, req.user.sub, true);
+    if (!parent) {
+      await Promise.all((req.files || []).map(file => fs.unlink(file.path).catch(() => {})));
+      return res.status(403).json({ error: 'Cartella non accessibile' });
+    }
+    if (parent.is_system && (req.files || []).some(file => !file.mimetype.startsWith('image/'))) {
+      await Promise.all((req.files || []).map(file => fs.unlink(file.path).catch(() => {})));
+      return res.status(400).json({ error: 'Nella cartella Immagini puoi caricare solo immagini' });
+    }
   }
   const client = await pool.connect();
   try {
@@ -584,12 +635,16 @@ app.get('/api/entries/:id/content', auth, async (req, res) => {
 app.patch('/api/entries/:id/move', auth, writable, async (req, res) => {
   const entry = await canAccess(req.params.id, req.user.sub, true);
   if (!entry || entry.is_trashed) return res.status(404).json({ error: 'Elemento non trovato' });
+  if (entry.is_system) return res.status(400).json({ error: 'La cartella Immagini è fissa e non può essere spostata' });
   const parentId = req.body.parentId || null;
   if (parentId === entry.id) return res.status(400).json({ error: 'Una cartella non può contenere sé stessa' });
   if (parentId) {
     const destination = await canAccess(parentId, req.user.sub, true);
     if (!destination || destination.kind !== 'folder' || destination.is_trashed) {
       return res.status(400).json({ error: 'Cartella di destinazione non valida' });
+    }
+    if (destination.is_system && (entry.kind !== 'file' || !entry.mime_type?.startsWith('image/'))) {
+      return res.status(400).json({ error: 'Nella cartella Immagini puoi spostare solo immagini' });
     }
     if (entry.kind === 'folder') {
       const { rows } = await pool.query(
@@ -615,6 +670,7 @@ app.patch('/api/entries/:id/move', auth, writable, async (req, res) => {
 app.delete('/api/entries/:id', auth, writable, async (req, res) => {
   const entry = await canAccess(req.params.id, req.user.sub, true);
   if (!entry) return res.status(404).json({ error: 'Elemento non trovato' });
+  if (entry.is_system) return res.status(400).json({ error: 'La cartella Immagini è fissa e non può essere eliminata' });
   await pool.query('UPDATE entries SET is_trashed=true,trashed_at=now(),updated_at=now() WHERE id=$1', [req.params.id]);
   await recordChange(pool, entry.id, 'trashed');
   res.status(204).end();
