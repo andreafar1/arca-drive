@@ -729,6 +729,7 @@ app.delete('/api/entries/:id/permanent', auth, writable, async (req, res) => {
   res.status(204).end();
 });
 
+app.use('/vendor/pdfjs', express.static(path.join(__dirname, 'node_modules/pdfjs-dist/legacy/build')));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 app.use((_req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
 
