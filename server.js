@@ -13,6 +13,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const STORAGE_DIR = process.env.STORAGE_DIR || '/data/files';
 const MAX_FILE_SIZE = Number(process.env.MAX_FILE_SIZE_MB || 200) * 1024 * 1024;
+const MAX_UPLOAD_CHUNK = Number(process.env.MAX_UPLOAD_CHUNK_MB || 10) * 1024 * 1024;
+const ACCESS_TOKEN_MINUTES = Number(process.env.ACCESS_TOKEN_MINUTES || 15);
+const REFRESH_TOKEN_DAYS = Number(process.env.REFRESH_TOKEN_DAYS || 30);
 const JWT_SECRET = process.env.JWT_SECRET;
 const DATABASE_URL = process.env.DATABASE_URL;
 
@@ -41,8 +44,19 @@ for (let attempt = 1; attempt <= 30; attempt++) {
   }
 }
 
+const expiredUploads = await pool.query("DELETE FROM upload_sessions WHERE expires_at<=now() RETURNING storage_name");
+await Promise.all(expiredUploads.rows.map(row => fs.unlink(path.join(STORAGE_DIR, row.storage_name)).catch(() => {})));
+await pool.query("DELETE FROM device_sessions WHERE expires_at<=now() OR revoked_at<now()-interval '30 days'");
+
 const app = express();
 app.disable('x-powered-by');
+if (process.env.TRUST_PROXY === 'true') app.set('trust proxy', 1);
+app.use((req, res, next) => {
+  if (process.env.REQUIRE_HTTPS === 'true' && !req.secure && req.path !== '/health') {
+    return res.status(426).json({ error: 'HTTPS richiesto' });
+  }
+  next();
+});
 app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -51,14 +65,54 @@ app.use((req, res, next) => {
   next();
 });
 
-function tokenFor(user) {
-  return jwt.sign({ sub: user.id, role: user.role, email: user.email }, JWT_SECRET, { expiresIn: '12h' });
+function accessTokenFor(user, sessionId) {
+  return jwt.sign(
+    { sub: user.id, sid: sessionId, role: user.role, email: user.email, typ: 'access' },
+    JWT_SECRET,
+    { expiresIn: `${ACCESS_TOKEN_MINUTES}m` }
+  );
 }
 
-function auth(req, res, next) {
+function hashToken(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+async function createSession(user, req, device = {}) {
+  const refreshToken = crypto.randomBytes(48).toString('base64url');
+  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_DAYS * 86400000);
+  const { rows } = await pool.query(
+    `INSERT INTO device_sessions(user_id,refresh_token_hash,device_name,platform,last_ip,user_agent,expires_at)
+     VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+    [
+      user.id,
+      hashToken(refreshToken),
+      cleanName(device.deviceName || 'Browser web'),
+      String(device.platform || 'web').slice(0, 40),
+      req.ip,
+      String(req.headers['user-agent'] || '').slice(0, 500),
+      expiresAt
+    ]
+  );
+  const accessToken = accessTokenFor(user, rows[0].id);
+  return {
+    token: accessToken,
+    accessToken,
+    refreshToken,
+    expiresIn: ACCESS_TOKEN_MINUTES * 60,
+    user
+  };
+}
+
+async function auth(req, res, next) {
   const value = req.headers.authorization || '';
   try {
     req.user = jwt.verify(value.replace(/^Bearer\s+/i, ''), JWT_SECRET);
+    if (req.user.typ !== 'access') throw new Error('Invalid token type');
+    const { rowCount } = await pool.query(
+      'SELECT 1 FROM device_sessions WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL AND expires_at>now()',
+      [req.user.sid, req.user.sub]
+    );
+    if (!rowCount) throw new Error('Revoked session');
     next();
   } catch {
     res.status(401).json({ error: 'Sessione non valida o scaduta' });
@@ -79,6 +133,19 @@ function cleanName(value) {
   const name = String(value || '').trim().replace(/[\\/\0]/g, '_');
   if (!name || name.length > 255) throw new Error('Nome non valido');
   return name;
+}
+
+async function recordChange(db, entryId, action, payload = {}) {
+  await db.query(
+    `INSERT INTO changes(user_id,entry_id,action,payload)
+     SELECT recipients.user_id,$1,$2,$3::jsonb
+     FROM (
+       SELECT owner_id AS user_id FROM entries WHERE id=$1
+       UNION
+       SELECT user_id FROM shares WHERE entry_id=$1
+     ) recipients`,
+    [entryId, action, JSON.stringify(payload)]
+  );
 }
 
 async function canAccess(entryId, userId, edit = false) {
@@ -127,7 +194,7 @@ app.post('/api/setup', async (req, res) => {
       [email, name, hash]
     );
     await client.query('COMMIT');
-    res.status(201).json({ token: tokenFor(rows[0]), user: rows[0] });
+    res.status(201).json(await createSession(rows[0], req, req.body));
   } catch (error) {
     await client.query('ROLLBACK');
     res.status(400).json({ error: error.message });
@@ -144,12 +211,72 @@ app.post('/api/auth/login', async (req, res) => {
     return res.status(401).json({ error: 'Email o password non corretti' });
   }
   const safe = { id: user.id, email: user.email, name: user.name, role: user.role };
-  res.json({ token: tokenFor(safe), user: safe });
+  res.json(await createSession(safe, req, req.body));
+});
+
+app.post('/api/auth/refresh', async (req, res) => {
+  const refreshToken = String(req.body.refreshToken || '');
+  if (!refreshToken) return res.status(400).json({ error: 'Refresh token richiesto' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT ds.*,u.email,u.name,u.role
+       FROM device_sessions ds JOIN users u ON u.id=ds.user_id
+       WHERE ds.refresh_token_hash=$1 AND ds.revoked_at IS NULL AND ds.expires_at>now()
+       FOR UPDATE`,
+      [hashToken(refreshToken)]
+    );
+    const session = rows[0];
+    if (!session) {
+      await client.query('ROLLBACK');
+      return res.status(401).json({ error: 'Sessione non valida o scaduta' });
+    }
+    const nextRefreshToken = crypto.randomBytes(48).toString('base64url');
+    const expiresAt = new Date(Date.now() + REFRESH_TOKEN_DAYS * 86400000);
+    await client.query(
+      `UPDATE device_sessions SET refresh_token_hash=$1,last_used_at=now(),last_ip=$2,user_agent=$3,expires_at=$4 WHERE id=$5`,
+      [hashToken(nextRefreshToken), req.ip, String(req.headers['user-agent'] || '').slice(0, 500), expiresAt, session.id]
+    );
+    await client.query('COMMIT');
+    const safe = { id: session.user_id, email: session.email, name: session.name, role: session.role };
+    const accessToken = accessTokenFor(safe, session.id);
+    res.json({ token: accessToken, accessToken, refreshToken: nextRefreshToken, expiresIn: ACCESS_TOKEN_MINUTES * 60, user: safe });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/auth/logout', auth, async (req, res) => {
+  await pool.query('UPDATE device_sessions SET revoked_at=now() WHERE id=$1 AND user_id=$2', [req.user.sid, req.user.sub]);
+  res.status(204).end();
 });
 
 app.get('/api/me', auth, async (req, res) => {
   const { rows } = await pool.query('SELECT id,email,name,role,created_at FROM users WHERE id=$1', [req.user.sub]);
   res.json(rows[0]);
+});
+
+app.get('/api/devices', auth, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT id,device_name,platform,last_ip,created_at,last_used_at,expires_at,(id=$2) AS current
+     FROM device_sessions WHERE user_id=$1 AND revoked_at IS NULL AND expires_at>now()
+     ORDER BY last_used_at DESC`,
+    [req.user.sub, req.user.sid]
+  );
+  res.json(rows);
+});
+
+app.delete('/api/devices/:id', auth, async (req, res) => {
+  const result = await pool.query(
+    'UPDATE device_sessions SET revoked_at=now() WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL',
+    [req.params.id, req.user.sub]
+  );
+  if (!result.rowCount) return res.status(404).json({ error: 'Dispositivo non trovato' });
+  res.status(204).end();
 });
 
 app.get('/api/storage', auth, async (_req, res) => {
@@ -168,6 +295,39 @@ app.get('/api/storage', auth, async (_req, res) => {
     diskUsedBytes,
     diskUsedPercent: totalBytes ? Math.round((diskUsedBytes / totalBytes) * 1000) / 10 : 0
   });
+});
+
+app.get('/api/changes', auth, async (req, res) => {
+  const cursor = Math.max(0, Number(req.query.cursor || 0));
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit || 200)));
+  const { rows } = await pool.query(
+    `SELECT id,entry_id,action,payload,created_at
+     FROM changes WHERE user_id=$1 AND id>$2
+     ORDER BY id ASC LIMIT $3`,
+    [req.user.sub, cursor, limit]
+  );
+  res.json({
+    changes: rows,
+    nextCursor: rows.length ? Number(rows[rows.length - 1].id) : cursor,
+    hasMore: rows.length === limit
+  });
+});
+
+app.get('/api/sync/bootstrap', auth, async (req, res) => {
+  const [entriesResult, cursorResult] = await Promise.all([
+    pool.query(
+      `SELECT DISTINCT e.id,e.parent_id,e.name,e.kind,e.mime_type,e.size_bytes,e.is_trashed,e.created_at,e.updated_at,
+         u.name AS owner_name,(e.owner_id=$1) AS owned
+       FROM entries e
+       JOIN users u ON u.id=e.owner_id
+       LEFT JOIN shares s ON s.entry_id=e.id AND s.user_id=$1
+       WHERE e.owner_id=$1 OR s.user_id=$1 OR EXISTS(SELECT 1 FROM users me WHERE me.id=$1 AND me.role='admin')
+       ORDER BY e.id`,
+      [req.user.sub]
+    ),
+    pool.query('SELECT COALESCE(MAX(id),0)::bigint AS cursor FROM changes WHERE user_id=$1', [req.user.sub])
+  ]);
+  res.json({ entries: entriesResult.rows, cursor: Number(cursorResult.rows[0].cursor) });
 });
 
 app.get('/api/users', auth, admin, async (_req, res) => {
@@ -236,11 +396,141 @@ app.post('/api/folders', auth, writable, async (req, res) => {
       'INSERT INTO entries(parent_id,owner_id,name,kind) VALUES($1,$2,$3,\'folder\') RETURNING *',
       [parentId, req.user.sub, name]
     );
+    await recordChange(pool, rows[0].id, 'created', { kind: 'folder', parentId });
     res.status(201).json(rows[0]);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
 });
+
+app.post('/api/uploads', auth, writable, async (req, res) => {
+  try {
+    const name = cleanName(req.body.name);
+    const totalBytes = Number(req.body.size);
+    const mimeType = String(req.body.mimeType || 'application/octet-stream').slice(0, 255);
+    const parentId = req.body.parentId || null;
+    if (!Number.isSafeInteger(totalBytes) || totalBytes <= 0 || totalBytes > MAX_FILE_SIZE) {
+      return res.status(400).json({ error: 'Dimensione file non valida' });
+    }
+    if (parentId && !(await canAccess(parentId, req.user.sub, true))) {
+      return res.status(403).json({ error: 'Cartella non accessibile' });
+    }
+    const storageName = `${crypto.randomUUID()}.part`;
+    await fs.writeFile(path.join(STORAGE_DIR, storageName), '');
+    const { rows } = await pool.query(
+      `INSERT INTO upload_sessions(owner_id,parent_id,name,mime_type,total_bytes,storage_name,expires_at)
+       VALUES($1,$2,$3,$4,$5,$6,now()+interval '24 hours')
+       RETURNING id,received_bytes,total_bytes,expires_at`,
+      [req.user.sub, parentId, name, mimeType, totalBytes, storageName]
+    );
+    res.status(201).json({
+      uploadId: rows[0].id,
+      offset: Number(rows[0].received_bytes),
+      size: Number(rows[0].total_bytes),
+      expiresAt: rows[0].expires_at,
+      chunkSize: MAX_UPLOAD_CHUNK
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/uploads/:id', auth, writable, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT id,name,mime_type,received_bytes,total_bytes,expires_at
+     FROM upload_sessions WHERE id=$1 AND owner_id=$2 AND expires_at>now()`,
+    [req.params.id, req.user.sub]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'Upload non trovato o scaduto' });
+  res.json({
+    uploadId: rows[0].id,
+    name: rows[0].name,
+    mimeType: rows[0].mime_type,
+    offset: Number(rows[0].received_bytes),
+    size: Number(rows[0].total_bytes),
+    expiresAt: rows[0].expires_at
+  });
+});
+
+app.patch(
+  '/api/uploads/:id',
+  auth,
+  writable,
+  express.raw({ type: 'application/octet-stream', limit: MAX_UPLOAD_CHUNK }),
+  async (req, res) => {
+    const requestedOffset = Number(req.headers['upload-offset']);
+    if (!Number.isSafeInteger(requestedOffset) || !Buffer.isBuffer(req.body) || !req.body.length) {
+      return res.status(400).json({ error: 'Blocco upload non valido' });
+    }
+    const client = await pool.connect();
+    let session;
+    let renamedFile;
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        'SELECT * FROM upload_sessions WHERE id=$1 AND owner_id=$2 AND expires_at>now() FOR UPDATE',
+        [req.params.id, req.user.sub]
+      );
+      session = result.rows[0];
+      if (!session) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Upload non trovato o scaduto' });
+      }
+      const currentOffset = Number(session.received_bytes);
+      const totalBytes = Number(session.total_bytes);
+      if (requestedOffset !== currentOffset) {
+        await client.query('ROLLBACK');
+        res.setHeader('Upload-Offset', currentOffset);
+        return res.status(409).json({ error: 'Offset non valido', offset: currentOffset });
+      }
+      if (currentOffset + req.body.length > totalBytes) {
+        await client.query('ROLLBACK');
+        return res.status(413).json({ error: 'Il blocco supera la dimensione dichiarata' });
+      }
+      const partPath = path.join(STORAGE_DIR, session.storage_name);
+      const handle = await fs.open(partPath, 'r+');
+      try {
+        await handle.write(req.body, 0, req.body.length, currentOffset);
+      } finally {
+        await handle.close();
+      }
+      const nextOffset = currentOffset + req.body.length;
+      if (nextOffset < totalBytes) {
+        await client.query('UPDATE upload_sessions SET received_bytes=$1,updated_at=now() WHERE id=$2', [nextOffset, session.id]);
+        await client.query('COMMIT');
+        res.setHeader('Upload-Offset', nextOffset);
+        return res.status(204).end();
+      }
+      const finalStorageName = session.storage_name.replace(/\.part$/, '');
+      const finalPath = path.join(STORAGE_DIR, finalStorageName);
+      await fs.rename(partPath, finalPath);
+      renamedFile = { partPath, finalPath };
+      const entryResult = await client.query(
+        `INSERT INTO entries(parent_id,owner_id,name,kind,mime_type,size_bytes,storage_name)
+         VALUES($1,$2,$3,'file',$4,$5,$6) RETURNING *`,
+        [session.parent_id, req.user.sub, session.name, session.mime_type, totalBytes, finalStorageName]
+      );
+      await recordChange(client, entryResult.rows[0].id, 'created', {
+        kind: 'file',
+        parentId: session.parent_id,
+        sizeBytes: totalBytes,
+        resumable: true
+      });
+      await client.query('DELETE FROM upload_sessions WHERE id=$1', [session.id]);
+      await client.query('COMMIT');
+      res.setHeader('Upload-Offset', nextOffset);
+      res.setHeader('Upload-Complete', 'true');
+      res.setHeader('Entry-Id', entryResult.rows[0].id);
+      res.status(204).end();
+    } catch (error) {
+      await client.query('ROLLBACK');
+      if (renamedFile) await fs.rename(renamedFile.finalPath, renamedFile.partPath).catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+);
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -266,6 +556,7 @@ app.post('/api/files', auth, writable, upload.array('files', 20), async (req, re
          VALUES($1,$2,$3,'file',$4,$5,$6) RETURNING *`,
         [parentId, req.user.sub, cleanName(Buffer.from(file.originalname, 'latin1').toString('utf8')), file.mimetype, file.size, file.filename]
       );
+      await recordChange(client, rows[0].id, 'created', { kind: 'file', parentId, sizeBytes: file.size });
       created.push(rows[0]);
     }
     await client.query('COMMIT');
@@ -315,6 +606,7 @@ app.patch('/api/entries/:id/move', auth, writable, async (req, res) => {
     'UPDATE entries SET parent_id=$1,updated_at=now() WHERE id=$2 RETURNING id,parent_id,name,kind,updated_at',
     [parentId, entry.id]
   );
+  await recordChange(pool, entry.id, 'moved', { parentId });
   res.json(rows[0]);
 });
 
@@ -322,6 +614,7 @@ app.delete('/api/entries/:id', auth, writable, async (req, res) => {
   const entry = await canAccess(req.params.id, req.user.sub, true);
   if (!entry) return res.status(404).json({ error: 'Elemento non trovato' });
   await pool.query('UPDATE entries SET is_trashed=true,trashed_at=now(),updated_at=now() WHERE id=$1', [req.params.id]);
+  await recordChange(pool, entry.id, 'trashed');
   res.status(204).end();
 });
 
@@ -329,6 +622,7 @@ app.post('/api/entries/:id/restore', auth, writable, async (req, res) => {
   const entry = await canAccess(req.params.id, req.user.sub, true);
   if (!entry) return res.status(404).json({ error: 'Elemento non trovato' });
   await pool.query('UPDATE entries SET is_trashed=false,trashed_at=NULL,parent_id=NULL,updated_at=now() WHERE id=$1', [req.params.id]);
+  await recordChange(pool, entry.id, 'restored', { parentId: null });
   res.status(204).end();
 });
 
