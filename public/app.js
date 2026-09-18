@@ -170,11 +170,11 @@ async function loadEntries() {
       </div>`).join('');
     entries.forEach((entry, index) => {
       const row = $$('#rows .file-row')[index];
-      row.draggable = user.role !== 'viewer';
+      row.draggable = user.role !== 'viewer' && !entry.is_system;
       row.querySelector('.file-name strong').textContent = entry.name;
       row.querySelector('.entry-owner').textContent = entry.owner_name;
       const checkbox = row.querySelector('.entry-select');
-      checkbox.disabled = user.role === 'viewer' || view === 'trash';
+      checkbox.disabled = user.role === 'viewer' || view === 'trash' || entry.is_system;
       checkbox.addEventListener('click', event => event.stopPropagation());
       checkbox.addEventListener('change', () => {
         if (checkbox.checked) selectedEntries.set(entry.id, entry);
@@ -245,10 +245,12 @@ async function loadEntries() {
 
 function updateSelectionToolbar() {
   const count = selectedEntries.size;
+  const selectableCount = visibleEntries.filter(entry => !entry.is_system).length;
+  $('#selectAll').disabled = user.role === 'viewer' || view === 'trash' || selectableCount === 0;
   $('#selectedCount').textContent = count;
   $('#bulkActions').classList.toggle('hidden', count === 0);
-  $('#selectAll').checked = visibleEntries.length > 0 && count === visibleEntries.length;
-  $('#selectAll').indeterminate = count > 0 && count < visibleEntries.length;
+  $('#selectAll').checked = selectableCount > 0 && count === selectableCount;
+  $('#selectAll').indeterminate = count > 0 && count < selectableCount;
 }
 
 function clearSelection() {
@@ -261,9 +263,9 @@ function clearSelection() {
 $('#selectAll').addEventListener('change', event => {
   if (event.target.disabled) return;
   const checked = event.target.checked;
-  visibleEntries.forEach(entry => checked ? selectedEntries.set(entry.id, entry) : selectedEntries.delete(entry.id));
+  visibleEntries.filter(entry => !entry.is_system).forEach(entry => checked ? selectedEntries.set(entry.id, entry) : selectedEntries.delete(entry.id));
   $$('.entry-select:not(:disabled)').forEach(checkbox => { checkbox.checked = checked; });
-  $$('.file-row').forEach(row => row.classList.toggle('selected', checked));
+  $$('.entry-select:not(:disabled)').forEach(checkbox => checkbox.closest('.file-row').classList.toggle('selected', checked));
   updateSelectionToolbar();
 });
 
@@ -309,6 +311,7 @@ $('#bulkTrash').addEventListener('click', () => {
 function updateFolderLocation() {
   const insideFolder = Boolean(currentFolder);
   $('#folderBack').classList.toggle('hidden', !insideFolder);
+  $('#newFolder').classList.toggle('hidden', user.role === 'viewer' || view !== 'files' || currentFolder?.is_system);
   $('#title').textContent = insideFolder ? currentFolder.name : 'I miei file';
   renderBreadcrumb();
 }
@@ -441,6 +444,10 @@ function closeModal() {
 }
 
 function entryAction(entry) {
+  if (entry.is_system) {
+    toast('La cartella Immagini è fissa');
+    return;
+  }
   if (view === 'trash') {
     openModal('CESTINO', entry.name, `
       <div class="action-list">
@@ -563,7 +570,8 @@ async function uploadFiles(files, parentId = currentFolder?.id || null) {
   if (!files.length || uploadInProgress) return;
   const form = new FormData();
   files.forEach(file => form.append('files', file));
-  if (parentId) form.append('parentId', parentId);
+  if (view === 'images' && !parentId) form.append('collection', 'images');
+  else if (parentId) form.append('parentId', parentId);
   uploadInProgress = true;
   $('#upload').disabled = true;
   $('#uploadProgress').classList.remove('hidden');
