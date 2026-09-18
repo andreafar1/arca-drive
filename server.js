@@ -214,6 +214,19 @@ app.get('/api/entries', auth, async (req, res) => {
   res.json(rows);
 });
 
+app.get('/api/folders', auth, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT DISTINCT e.id,e.parent_id,e.name
+     FROM entries e
+     LEFT JOIN shares s ON s.entry_id=e.id AND s.user_id=$1
+     WHERE e.kind='folder' AND e.is_trashed=false
+       AND (e.owner_id=$1 OR s.user_id=$1 OR EXISTS(SELECT 1 FROM users me WHERE me.id=$1 AND me.role='admin'))
+     ORDER BY e.name`,
+    [req.user.sub]
+  );
+  res.json(rows);
+});
+
 app.post('/api/folders', auth, writable, async (req, res) => {
   try {
     const name = cleanName(req.body.name);
