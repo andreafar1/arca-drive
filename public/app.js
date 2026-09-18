@@ -1,18 +1,34 @@
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 let token = localStorage.getItem('arca_token');
+let refreshToken = localStorage.getItem('arca_refresh_token');
 let user = null;
 let view = 'files';
 let currentFolder = null;
 let searchTimer;
 let draggedEntry = null;
 
-async function api(url, options = {}) {
+async function api(url, options = {}, retry = true) {
   const headers = { ...(options.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (options.body && !(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
   const response = await fetch(url, { ...options, headers });
-  if (response.status === 401 && token) logout();
+  if (response.status === 401 && refreshToken && retry && url !== '/api/auth/refresh') {
+    const refreshed = await fetch('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken })
+    });
+    if (refreshed.ok) {
+      const session = await refreshed.json();
+      token = session.accessToken;
+      refreshToken = session.refreshToken;
+      localStorage.setItem('arca_token', token);
+      localStorage.setItem('arca_refresh_token', refreshToken);
+      return api(url, options, false);
+    }
+    logout(false);
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.error || 'Operazione non riuscita');
@@ -80,12 +96,16 @@ $('#authForm').addEventListener('submit', async event => {
       body: JSON.stringify({
         name: $('#name').value,
         email: $('#email').value,
-        password: $('#password').value
+        password: $('#password').value,
+        deviceName: `Browser su ${navigator.userAgentData?.platform || navigator.platform || 'dispositivo'}`,
+        platform: 'web'
       })
     });
     token = result.token;
+    refreshToken = result.refreshToken;
     user = result.user;
     localStorage.setItem('arca_token', token);
+    localStorage.setItem('arca_refresh_token', refreshToken);
     showApp();
   } catch (error) {
     $('#authError').textContent = error.message;
@@ -106,8 +126,12 @@ function showApp() {
   loadEntries();
 }
 
-function logout() {
+function logout(notifyServer = true) {
+  if (notifyServer && token) {
+    fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+  }
   localStorage.removeItem('arca_token');
+  localStorage.removeItem('arca_refresh_token');
   location.reload();
 }
 
