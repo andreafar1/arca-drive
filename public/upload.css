@@ -116,11 +116,12 @@
 }
 
 .file-row[draggable="true"] {
-  cursor: grab;
+  cursor: default;
 }
 
 .file-row.dragging {
   opacity: .45;
+  cursor: grabbing;
 }
 
 .file-row.drop-target {
