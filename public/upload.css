@@ -92,6 +92,61 @@
   color: #136f5d;
 }
 
+.action-list {
+  display: grid;
+  gap: 9px;
+}
+
+.action-list > button {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.action-list > button:hover {
+  border-color: var(--mint);
+  background: #f0fbf7;
+}
+
+.action-list > button > span {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: #e7f1ff;
+  color: #347ec6;
+  font-size: 20px;
+}
+
+.action-list > button > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.action-list small {
+  color: var(--muted);
+}
+
+.action-list > button.danger > span {
+  background: #ffe8eb;
+  color: var(--danger);
+}
+
+.action-list > button.danger:hover {
+  border-color: #e9a5ad;
+  background: #fff7f8;
+}
+
 @media (max-width: 650px) {
   .page-head {
     align-items: flex-start;
