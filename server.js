@@ -622,9 +622,54 @@ app.delete('/api/entries/:id', auth, writable, async (req, res) => {
 
 app.post('/api/entries/:id/restore', auth, writable, async (req, res) => {
   const entry = await canAccess(req.params.id, req.user.sub, true);
-  if (!entry) return res.status(404).json({ error: 'Elemento non trovato' });
-  await pool.query('UPDATE entries SET is_trashed=false,trashed_at=NULL,parent_id=NULL,updated_at=now() WHERE id=$1', [req.params.id]);
-  await recordChange(pool, entry.id, 'restored', { parentId: null });
+  if (!entry || !entry.is_trashed) return res.status(404).json({ error: 'Elemento non trovato nel cestino' });
+  const { rows } = await pool.query(
+    `UPDATE entries e SET
+       is_trashed=false,
+       trashed_at=NULL,
+       parent_id=CASE
+         WHEN e.parent_id IS NULL OR EXISTS(SELECT 1 FROM entries p WHERE p.id=e.parent_id AND p.is_trashed=false) THEN e.parent_id
+         ELSE NULL
+       END,
+       updated_at=now()
+     WHERE e.id=$1 RETURNING parent_id`,
+    [req.params.id]
+  );
+  await recordChange(pool, entry.id, 'restored', { parentId: rows[0].parent_id });
+  res.status(204).end();
+});
+
+app.delete('/api/entries/:id/permanent', auth, writable, async (req, res) => {
+  const entry = await canAccess(req.params.id, req.user.sub, true);
+  if (!entry || !entry.is_trashed) return res.status(404).json({ error: 'Elemento non trovato nel cestino' });
+
+  const client = await pool.connect();
+  let storageNames = [];
+  try {
+    await client.query('BEGIN');
+    const descendants = await client.query(
+      `WITH RECURSIVE tree AS (
+         SELECT id,storage_name FROM entries WHERE id=$1
+         UNION ALL
+         SELECT child.id,child.storage_name FROM entries child JOIN tree parent ON child.parent_id=parent.id
+       )
+       SELECT storage_name FROM tree WHERE storage_name IS NOT NULL`,
+      [entry.id]
+    );
+    storageNames = descendants.rows.map(row => row.storage_name);
+    await recordChange(client, entry.id, 'deleted', { permanent: true });
+    await client.query('DELETE FROM entries WHERE id=$1', [entry.id]);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  await Promise.all(storageNames.map(storageName => fs.unlink(path.join(STORAGE_DIR, storageName)).catch(error => {
+    if (error.code !== 'ENOENT') console.error('Impossibile eliminare il file fisico', storageName, error);
+  })));
   res.status(204).end();
 });
 
