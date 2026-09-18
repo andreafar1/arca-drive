@@ -4,6 +4,31 @@
   gap: 9px;
 }
 
+.location-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.folder-back {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.folder-back:hover {
+  border-color: var(--mint);
+  background: #f0fbf7;
+}
+
 .upload-top {
   display: inline-flex;
   align-items: center;
