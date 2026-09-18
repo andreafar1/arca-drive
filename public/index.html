@@ -80,6 +80,15 @@
       <div class="modal-actions"><button type="button" id="cancel">Annulla</button><button id="confirm">Conferma</button></div>
     </form>
   </div>
+  <div id="uploadProgress" class="upload-progress hidden" role="status" aria-live="polite">
+    <div class="upload-progress-head">
+      <div><strong id="uploadProgressTitle">Caricamento in corso</strong><small id="uploadProgressDetail"></small></div>
+      <strong id="uploadProgressPercent">0%</strong>
+    </div>
+    <div class="upload-progress-track" role="progressbar" aria-label="Avanzamento caricamento" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <i id="uploadProgressBar"></i>
+    </div>
+  </div>
   <div id="toast" class="toast"></div>
   <script src="/app.js"></script>
 </body>
