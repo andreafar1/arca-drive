@@ -13,6 +13,7 @@ let visibleEntries = [];
 let previewEntryIndex = -1;
 let previewObjectUrl = null;
 let previewTouchStartX = null;
+const selectedEntries = new Map();
 
 function hasDraggedFiles(event) {
   return [...(event.dataTransfer?.types || [])].includes('Files');
@@ -157,17 +158,30 @@ async function loadEntries() {
   try {
     const entries = await api(`/api/entries?${query}`);
     visibleEntries = entries;
+    selectedEntries.clear();
+    $('#selectAll').disabled = user.role === 'viewer' || view === 'trash';
+    updateSelectionToolbar();
     $('#rows').innerHTML = entries.map(entry => `
       <div class="file-row" data-id="${entry.id}">
+        <span><input class="entry-select" type="checkbox" aria-label="Seleziona elemento"></span>
         <div class="file-name"><i class="${entry.kind === 'file' ? (entry.mime_type?.includes('pdf') ? 'pdf' : entry.mime_type?.startsWith('image/') ? 'image' : '') : ''}">${entry.kind === 'folder' ? '▰' : entry.mime_type?.includes('pdf') ? 'PDF' : entry.mime_type?.startsWith('image/') ? 'IMG' : 'DOC'}</i><strong></strong></div>
-        <span></span><span>${formatDate(entry.updated_at)}</span><span>${formatSize(Number(entry.size_bytes))}</span>
-        <button aria-label="Azioni">•••</button>
+        <span class="entry-owner"></span><span>${formatDate(entry.updated_at)}</span><span>${formatSize(Number(entry.size_bytes))}</span>
+        <button class="entry-actions" aria-label="Azioni">•••</button>
       </div>`).join('');
     entries.forEach((entry, index) => {
       const row = $$('#rows .file-row')[index];
       row.draggable = user.role !== 'viewer';
       row.querySelector('.file-name strong').textContent = entry.name;
-      row.children[1].textContent = entry.owner_name;
+      row.querySelector('.entry-owner').textContent = entry.owner_name;
+      const checkbox = row.querySelector('.entry-select');
+      checkbox.disabled = user.role === 'viewer' || view === 'trash';
+      checkbox.addEventListener('click', event => event.stopPropagation());
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selectedEntries.set(entry.id, entry);
+        else selectedEntries.delete(entry.id);
+        row.classList.toggle('selected', checkbox.checked);
+        updateSelectionToolbar();
+      });
       row.addEventListener('dragstart', event => {
         draggedEntry = entry;
         event.dataTransfer.effectAllowed = 'move';
@@ -228,6 +242,69 @@ async function loadEntries() {
     toast(error.message);
   }
 }
+
+function updateSelectionToolbar() {
+  const count = selectedEntries.size;
+  $('#selectedCount').textContent = count;
+  $('#bulkActions').classList.toggle('hidden', count === 0);
+  $('#selectAll').checked = visibleEntries.length > 0 && count === visibleEntries.length;
+  $('#selectAll').indeterminate = count > 0 && count < visibleEntries.length;
+}
+
+function clearSelection() {
+  selectedEntries.clear();
+  $$('.entry-select').forEach(checkbox => { checkbox.checked = false; });
+  $$('.file-row.selected').forEach(row => row.classList.remove('selected'));
+  updateSelectionToolbar();
+}
+
+$('#selectAll').addEventListener('change', event => {
+  if (event.target.disabled) return;
+  const checked = event.target.checked;
+  visibleEntries.forEach(entry => checked ? selectedEntries.set(entry.id, entry) : selectedEntries.delete(entry.id));
+  $$('.entry-select:not(:disabled)').forEach(checkbox => { checkbox.checked = checked; });
+  $$('.file-row').forEach(row => row.classList.toggle('selected', checked));
+  updateSelectionToolbar();
+});
+
+$('#clearSelection').addEventListener('click', clearSelection);
+
+$('#bulkMove').addEventListener('click', async () => {
+  const entries = [...selectedEntries.values()];
+  try {
+    const folders = await api('/api/folders');
+    openModal('SPOSTA ELEMENTI', `Sposta ${entries.length} elementi`, '<label class="field">Cartella<select id="bulkDestination"><option value="">I miei file</option></select></label>', async () => {
+      const parentId = $('#bulkDestination').value || null;
+      await Promise.all(entries.map(entry => api(`/api/entries/${entry.id}/move`, {
+        method: 'PATCH',
+        body: JSON.stringify({ parentId })
+      })));
+      toast(`${entries.length} elementi spostati`);
+      clearSelection();
+      loadEntries();
+    });
+    const selectedIds = new Set(entries.map(entry => entry.id));
+    folders.filter(folder => !selectedIds.has(folder.id)).forEach(folder => {
+      const option = document.createElement('option');
+      option.value = folder.id;
+      option.textContent = folder.name;
+      $('#bulkDestination').append(option);
+    });
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+$('#bulkTrash').addEventListener('click', () => {
+  const entries = [...selectedEntries.values()];
+  openModal('CESTINO', 'Sposta gli elementi nel cestino', `<p>Spostare nel cestino <strong>${entries.length} elementi</strong>?</p>`, async () => {
+    await Promise.all(entries.map(entry => api(`/api/entries/${entry.id}`, { method: 'DELETE' })));
+    toast(`${entries.length} elementi spostati nel cestino`);
+    clearSelection();
+    loadStorage();
+    loadEntries();
+  });
+});
 
 function updateFolderLocation() {
   const insideFolder = Boolean(currentFolder);
