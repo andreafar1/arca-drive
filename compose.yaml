@@ -29,7 +29,11 @@ services:
         condition: service_healthy
     environment:
       PORT: 3000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-arca_drive}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-arca_drive}
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-arca_drive}
+      PGUSER: ${POSTGRES_USER:-arca_drive}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?Imposta JWT_SECRET nel file .env}
       STORAGE_DIR: /data/files
       MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-200}
