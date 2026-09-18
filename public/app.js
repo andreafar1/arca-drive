@@ -209,11 +209,20 @@ function updateFolderLocation() {
   const insideFolder = Boolean(currentFolder);
   $('#folderBack').classList.toggle('hidden', !insideFolder);
   $('#breadcrumb').textContent = insideFolder ? 'I miei file /' : 'Spazio aziendale /';
+  $('#breadcrumb').disabled = !insideFolder;
   $('#title').textContent = insideFolder ? currentFolder.name : 'I miei file';
 }
 
 $('#folderBack').addEventListener('click', () => {
   currentFolder = folderHistory.pop() || null;
+  updateFolderLocation();
+  loadEntries();
+});
+
+$('#breadcrumb').addEventListener('click', () => {
+  if (view !== 'files' || !currentFolder) return;
+  currentFolder = null;
+  folderHistory = [];
   updateFolderLocation();
   loadEntries();
 });
@@ -429,6 +438,7 @@ $$('.nav').forEach(button => button.addEventListener('click', () => {
   $('#newFolder').classList.toggle('hidden', view !== 'files');
   $('#title').textContent = view === 'files' ? 'I miei file' : view === 'trash' ? 'Cestino' : 'Persone';
   $('#breadcrumb').textContent = 'Spazio aziendale /';
+  $('#breadcrumb').disabled = true;
   $('#folderBack').classList.add('hidden');
   $('#sidebar').classList.remove('open');
   loadEntries();
