@@ -62,6 +62,36 @@
   margin-top: 12px;
 }
 
+.file-row[draggable="true"] {
+  cursor: grab;
+}
+
+.file-row.dragging {
+  opacity: .45;
+}
+
+.file-row.drop-target {
+  background: #e7f8f2;
+  box-shadow: inset 0 0 0 2px var(--mint);
+}
+
+.root-drop {
+  margin: -10px 0 14px;
+  padding: 14px;
+  border: 2px dashed #8fa0b5;
+  border-radius: 11px;
+  color: #667187;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.root-drop.drop-target {
+  border-color: #168e75;
+  background: #e7f8f2;
+  color: #136f5d;
+}
+
 @media (max-width: 650px) {
   .page-head {
     align-items: flex-start;
