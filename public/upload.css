@@ -29,24 +29,32 @@
   background: #f0fbf7;
 }
 
-.breadcrumb-link {
-  display: block;
+.breadcrumb-path {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.breadcrumb-path button {
   margin: 0;
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--muted);
-  font-size: 13px;
+  color: inherit;
+  font: inherit;
   cursor: pointer;
 }
 
-.breadcrumb-link:not(:disabled):hover {
+.breadcrumb-path button:hover {
   color: #168e75;
   text-decoration: underline;
 }
 
-.breadcrumb-link:disabled {
-  cursor: default;
+.breadcrumb-separator {
+  color: #aab2c0;
 }
 
 .upload-top {
