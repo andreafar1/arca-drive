@@ -31,6 +31,10 @@ function hasDraggedFiles(event) {
   return [...(event.dataTransfer?.types || [])].includes('Files');
 }
 
+function isOfficeDocument(entry) {
+  return /\.(docx?|xlsx?|pptx?|odt|ods|odp)$/i.test(entry.name);
+}
+
 async function api(url, options = {}, retry = true) {
   const headers = { ...(options.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -244,6 +248,8 @@ async function loadEntries() {
           currentFolder = entry;
           updateFolderLocation();
           loadEntries();
+        } else if (isOfficeDocument(entry)) {
+          openOfficeEditor(entry);
         } else {
           preview(entry);
         }
@@ -251,6 +257,32 @@ async function loadEntries() {
     });
     $('#empty').style.display = entries.length ? 'none' : 'block';
   } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function openOfficeEditor(entry) {
+  try {
+    const editor = await api(`/api/entries/${entry.id}/editor`);
+    $('#officeEditorName').textContent = entry.name;
+    $('#officeEditor').classList.remove('hidden');
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = editor.actionUrl;
+    form.target = 'arcaOfficeFrame';
+    form.className = 'hidden';
+    for (const [name, value] of Object.entries({ access_token: editor.accessToken, access_token_ttl: editor.accessTokenTtl })) {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = value;
+      form.append(input);
+    }
+    document.body.append(form);
+    form.submit();
+    form.remove();
+  } catch (error) {
+    $('#officeEditor').classList.add('hidden');
     toast(error.message);
   }
 }
@@ -724,6 +756,12 @@ $('#logout').onclick = logout;
 $('#closePreview').onclick = () => {
   previewRenderId += 1;
   $('#preview').classList.remove('open');
+};
+$('#closeOfficeEditor').onclick = () => {
+  $('#officeEditor').classList.add('hidden');
+  $('#officeFrame').src = 'about:blank';
+  loadStorage();
+  loadEntries();
 };
 $('#previousImage').onclick = () => navigatePreview(-1);
 $('#nextImage').onclick = () => navigatePreview(1);
