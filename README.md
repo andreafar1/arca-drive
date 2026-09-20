@@ -10,6 +10,7 @@ Arca Drive è un file manager aziendale self-hosted per Ubuntu, distribuito con 
 - upload e download persistenti;
 - cartelle, ricerca, cestino e ripristino;
 - anteprima nel browser di PDF e immagini;
+- modifica nel browser di documenti Word, Excel, PowerPoint e OpenDocument tramite Collabora CODE;
 - PostgreSQL per utenti e metadati;
 - volume Docker separato per i documenti.
 - sessioni per dispositivo con refresh token ruotati e revocabili;
@@ -21,7 +22,7 @@ Arca Drive è un file manager aziendale self-hosted per Ubuntu, distribuito con 
 - Ubuntu Server 22.04 o successivo;
 - Docker Engine e Docker Compose v2;
 - Git;
-- almeno 2 GB di RAM;
+- almeno 4 GB di RAM, consigliati 8 GB con Collabora CODE;
 - spazio disco adeguato ai documenti.
 
 ## Installazione
@@ -53,6 +54,14 @@ docker compose ps
 ```
 
 Apri `http://IP_DEL_SERVER:8080`. Al primo accesso verrà richiesto di creare l'amministratore iniziale.
+
+Collabora CODE è disponibile sulla porta `9980`. Se accedi ad Arca Drive tramite l'indirizzo IP e le porte predefinite non servono altre impostazioni. Se usi un dominio o un reverse proxy, imposta nel file `.env` l'indirizzo pubblico di Collabora, per esempio:
+
+```env
+COLLABORA_PUBLIC_URL=https://office.example.it
+```
+
+Il reverse proxy deve inoltrare anche le connessioni WebSocket di Collabora. Arca Drive comunica internamente con CODE e protegge i file tramite token WOPI temporanei. CODE è l'edizione di sviluppo gratuita di Collabora, indicata per test, uso domestico e startup; per un ambiente aziendale di produzione valuta Collabora Online Business.
 
 ## Aggiornamento
 
