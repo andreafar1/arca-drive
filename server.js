@@ -18,6 +18,9 @@ const ACCESS_TOKEN_MINUTES = Number(process.env.ACCESS_TOKEN_MINUTES || 15);
 const REFRESH_TOKEN_DAYS = Number(process.env.REFRESH_TOKEN_DAYS || 30);
 const JWT_SECRET = process.env.JWT_SECRET;
 const DATABASE_URL = process.env.DATABASE_URL;
+const COLLABORA_INTERNAL_URL = String(process.env.COLLABORA_INTERNAL_URL || 'http://collabora:9980').replace(/\/$/, '');
+const WOPI_INTERNAL_URL = String(process.env.WOPI_INTERNAL_URL || 'http://app:3000').replace(/\/$/, '');
+const OFFICE_EXTENSIONS = new Set(['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp']);
 
 if (!JWT_SECRET || JWT_SECRET.length < 32) throw new Error('JWT_SECRET must contain at least 32 characters');
 if (!DATABASE_URL && !process.env.PGHOST) throw new Error('Database configuration is required');
@@ -47,6 +50,7 @@ for (let attempt = 1; attempt <= 30; attempt++) {
 const expiredUploads = await pool.query("DELETE FROM upload_sessions WHERE expires_at<=now() RETURNING storage_name");
 await Promise.all(expiredUploads.rows.map(row => fs.unlink(path.join(STORAGE_DIR, row.storage_name)).catch(() => {})));
 await pool.query("DELETE FROM device_sessions WHERE expires_at<=now() OR revoked_at<now()-interval '30 days'");
+await pool.query('DELETE FROM wopi_locks WHERE expires_at<=now()');
 await pool.query(
   `UPDATE entries candidate SET is_system=true
    WHERE candidate.id IN (
@@ -164,6 +168,53 @@ async function ensureImagesFolder(userId, db = pool) {
     [userId]
   );
   return rows[0].id;
+}
+
+function officeExtension(name) {
+  return String(name || '').split('.').pop().toLowerCase();
+}
+
+function decodeXmlAttribute(value) {
+  return value
+    .replaceAll('&amp;', '&')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'");
+}
+
+let discoveryCache = { expiresAt: 0, xml: '' };
+async function collaboraActionUrl(extension, publicUrl, wopiSource) {
+  if (discoveryCache.expiresAt <= Date.now()) {
+    const response = await fetch(`${COLLABORA_INTERNAL_URL}/hosting/discovery`);
+    if (!response.ok) throw new Error('Collabora CODE non è disponibile');
+    discoveryCache = { xml: await response.text(), expiresAt: Date.now() + 5 * 60 * 1000 };
+  }
+  const actions = discoveryCache.xml.match(/<action\b[^>]*>/g) || [];
+  const candidates = actions.map(tag => Object.fromEntries(
+    [...tag.matchAll(/([\w-]+)="([^"]*)"/g)].map(match => [match[1], decodeXmlAttribute(match[2])])
+  ));
+  const action = candidates.find(item => item.ext === extension && item.name === 'edit')
+    || candidates.find(item => item.ext === extension && item.name === 'view');
+  if (!action?.urlsrc) throw new Error('Formato non supportato da Collabora CODE');
+  const cleanUrl = action.urlsrc.replace(/<[^>]+>/g, '');
+  const internalAction = new URL(cleanUrl);
+  const externalBase = new URL(publicUrl);
+  internalAction.protocol = externalBase.protocol;
+  internalAction.host = externalBase.host;
+  internalAction.searchParams.set('WOPISrc', wopiSource);
+  return internalAction.toString();
+}
+
+function wopiToken(req, res, next) {
+  try {
+    const payload = jwt.verify(String(req.query.access_token || ''), JWT_SECRET);
+    if (payload.typ !== 'wopi' || payload.entryId !== req.params.id) throw new Error('Token WOPI non valido');
+    req.wopi = payload;
+    next();
+  } catch {
+    res.status(401).json({ error: 'Token WOPI non valido o scaduto' });
+  }
 }
 
 async function recordChange(db, entryId, action, payload = {}) {
@@ -621,6 +672,142 @@ app.post('/api/files', auth, writable, upload.array('files', 20), async (req, re
   } finally {
     client.release();
   }
+});
+
+app.get('/api/entries/:id/editor', auth, async (req, res) => {
+  const entry = await canAccess(req.params.id, req.user.sub, false);
+  const extension = officeExtension(entry?.name);
+  if (!entry || entry.kind !== 'file' || entry.is_trashed || !OFFICE_EXTENSIONS.has(extension)) {
+    return res.status(404).json({ error: 'Documento modificabile non trovato' });
+  }
+  const editableEntry = req.user.role !== 'viewer' ? await canAccess(entry.id, req.user.sub, true) : null;
+  const canWrite = Boolean(editableEntry);
+  const { rows: userRows } = await pool.query('SELECT name FROM users WHERE id=$1', [req.user.sub]);
+  const expiresAt = Date.now() + 8 * 60 * 60 * 1000;
+  const accessToken = jwt.sign(
+    { typ: 'wopi', sub: req.user.sub, entryId: entry.id, canWrite, name: userRows[0]?.name },
+    JWT_SECRET,
+    { expiresIn: '8h' }
+  );
+  const wopiSource = `${WOPI_INTERNAL_URL}/api/wopi/files/${entry.id}`;
+  const configuredPublicUrl = String(process.env.COLLABORA_PUBLIC_URL || '').replace(/\/$/, '');
+  const publicUrl = configuredPublicUrl || `http://${req.hostname}:9980`;
+  try {
+    const actionUrl = await collaboraActionUrl(extension, publicUrl, wopiSource);
+    res.json({ actionUrl, accessToken, accessTokenTtl: expiresAt, canWrite });
+  } catch (error) {
+    res.status(503).json({ error: error.message });
+  }
+});
+
+app.get('/api/wopi/files/:id', wopiToken, async (req, res) => {
+  const entry = await canAccess(req.params.id, req.wopi.sub, false);
+  if (!entry || entry.kind !== 'file' || entry.is_trashed) return res.status(404).json({ error: 'File non trovato' });
+  const canWrite = Boolean(req.wopi.canWrite && await canAccess(entry.id, req.wopi.sub, true));
+  res.json({
+    BaseFileName: entry.name,
+    Size: Number(entry.size_bytes),
+    Version: new Date(entry.updated_at).getTime().toString(),
+    OwnerId: entry.owner_id,
+    UserId: req.wopi.sub,
+    UserFriendlyName: req.wopi.name || 'Utente Arca Drive',
+    UserCanWrite: canWrite,
+    ReadOnly: !canWrite,
+    SupportsLocks: true,
+    SupportsGetLock: true,
+    SupportsUpdate: true,
+    SupportsRename: false,
+    UserCanNotWriteRelative: true,
+    FileNameMaxLength: 255,
+    LastModifiedTime: new Date(entry.updated_at).toISOString()
+  });
+});
+
+app.get('/api/wopi/files/:id/contents', wopiToken, async (req, res) => {
+  const entry = await canAccess(req.params.id, req.wopi.sub, false);
+  if (!entry || entry.kind !== 'file' || entry.is_trashed) return res.status(404).end();
+  res.type(entry.mime_type || 'application/octet-stream');
+  res.sendFile(path.join(STORAGE_DIR, entry.storage_name));
+});
+
+app.post(
+  '/api/wopi/files/:id/contents',
+  wopiToken,
+  express.raw({ type: '*/*', limit: MAX_FILE_SIZE }),
+  async (req, res) => {
+    const entry = await canAccess(req.params.id, req.wopi.sub, true);
+    if (!req.wopi.canWrite || !entry || entry.kind !== 'file' || entry.is_trashed) return res.status(403).end();
+    if (!Buffer.isBuffer(req.body)) return res.status(400).json({ error: 'Contenuto documento non valido' });
+
+    await pool.query('DELETE FROM wopi_locks WHERE expires_at<=now()');
+    const activeLock = await pool.query('SELECT lock_id FROM wopi_locks WHERE entry_id=$1', [entry.id]);
+    const requestedLock = String(req.headers['x-wopi-lock'] || '');
+    if (activeLock.rows[0] && activeLock.rows[0].lock_id !== requestedLock) {
+      res.setHeader('X-WOPI-Lock', activeLock.rows[0].lock_id);
+      return res.status(409).end();
+    }
+
+    const temporaryPath = path.join(STORAGE_DIR, `${entry.storage_name}.${crypto.randomUUID()}.tmp`);
+    try {
+      await fs.writeFile(temporaryPath, req.body, { flag: 'wx' });
+      await fs.rename(temporaryPath, path.join(STORAGE_DIR, entry.storage_name));
+      const { rows } = await pool.query(
+        'UPDATE entries SET size_bytes=$1,updated_at=now() WHERE id=$2 RETURNING updated_at',
+        [req.body.length, entry.id]
+      );
+      await recordChange(pool, entry.id, 'updated', { sizeBytes: req.body.length, source: 'collabora' });
+      res.setHeader('X-WOPI-ItemVersion', new Date(rows[0].updated_at).getTime().toString());
+      res.json({ LastModifiedTime: new Date(rows[0].updated_at).toISOString() });
+    } catch (error) {
+      await fs.unlink(temporaryPath).catch(() => {});
+      throw error;
+    }
+  }
+);
+
+app.post('/api/wopi/files/:id', wopiToken, async (req, res) => {
+  const entry = await canAccess(req.params.id, req.wopi.sub, true);
+  if (!req.wopi.canWrite || !entry || entry.kind !== 'file' || entry.is_trashed) return res.status(403).end();
+  const operation = String(req.headers['x-wopi-override'] || '').toUpperCase();
+  const requestedLock = String(req.headers['x-wopi-lock'] || '');
+  if (requestedLock.length > 1024) return res.status(400).end();
+  await pool.query('DELETE FROM wopi_locks WHERE expires_at<=now()');
+  const { rows } = await pool.query('SELECT lock_id FROM wopi_locks WHERE entry_id=$1', [entry.id]);
+  const currentLock = rows[0]?.lock_id || '';
+
+  if (operation === 'GET_LOCK') {
+    res.setHeader('X-WOPI-Lock', currentLock);
+    return res.status(200).end();
+  }
+  if (operation === 'LOCK') {
+    if (currentLock && currentLock !== requestedLock) {
+      res.setHeader('X-WOPI-Lock', currentLock);
+      return res.status(409).end();
+    }
+    await pool.query(
+      `INSERT INTO wopi_locks(entry_id,lock_id,expires_at) VALUES($1,$2,now()+interval '30 minutes')
+       ON CONFLICT(entry_id) DO UPDATE SET lock_id=EXCLUDED.lock_id,expires_at=EXCLUDED.expires_at,updated_at=now()`,
+      [entry.id, requestedLock]
+    );
+    return res.status(200).end();
+  }
+  if (operation === 'REFRESH_LOCK') {
+    if (!currentLock || currentLock !== requestedLock) {
+      res.setHeader('X-WOPI-Lock', currentLock);
+      return res.status(409).end();
+    }
+    await pool.query("UPDATE wopi_locks SET expires_at=now()+interval '30 minutes',updated_at=now() WHERE entry_id=$1", [entry.id]);
+    return res.status(200).end();
+  }
+  if (operation === 'UNLOCK') {
+    if (!currentLock || currentLock !== requestedLock) {
+      res.setHeader('X-WOPI-Lock', currentLock);
+      return res.status(409).end();
+    }
+    await pool.query('DELETE FROM wopi_locks WHERE entry_id=$1', [entry.id]);
+    return res.status(200).end();
+  }
+  res.status(501).end();
 });
 
 app.get('/api/entries/:id/content', auth, async (req, res) => {
