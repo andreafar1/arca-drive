@@ -42,12 +42,30 @@ services:
       REFRESH_TOKEN_DAYS: ${REFRESH_TOKEN_DAYS:-30}
       TRUST_PROXY: ${TRUST_PROXY:-false}
       REQUIRE_HTTPS: ${REQUIRE_HTTPS:-false}
+      COLLABORA_INTERNAL_URL: http://collabora:9980
+      COLLABORA_PUBLIC_URL: ${COLLABORA_PUBLIC_URL:-}
+      WOPI_INTERNAL_URL: http://app:3000
     volumes:
       - file_data:/data/files
     ports:
       - "${ARCA_DRIVE_PORT:-8080}:3000"
     security_opt:
       - no-new-privileges:true
+    networks:
+      - arca_internal
+
+  collabora:
+    image: collabora/code:latest
+    container_name: arca-drive-collabora
+    restart: unless-stopped
+    environment:
+      aliasgroup1: http://app:3000
+      extra_params: --o:ssl.enable=false --o:ssl.termination=false --o:net.frame_ancestors=*
+      dictionaries: it_IT en_US
+    cap_add:
+      - MKNOD
+    ports:
+      - "${COLLABORA_PORT:-9980}:9980"
     networks:
       - arca_internal
 
