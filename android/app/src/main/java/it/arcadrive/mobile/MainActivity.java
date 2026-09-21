@@ -28,9 +28,11 @@ import android.widget.ArrayAdapter;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ImageView;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -40,12 +42,16 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import java.io.File;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.Date;
+import java.util.Locale;
+import java.text.SimpleDateFormat;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -73,6 +79,9 @@ public final class MainActivity extends Activity {
     private Button navFiles;
     private Button navImages;
     private Button navTrash;
+    private Button drawerNavFiles;
+    private Button drawerNavImages;
+    private Button drawerNavTrash;
     private ProgressDialog progress;
     private boolean internalViewer;
     private PdfRenderer activePdfRenderer;
@@ -80,6 +89,9 @@ public final class MainActivity extends Activity {
     private List<Entry> galleryEntries = new ArrayList<>();
     private int galleryIndex;
     private int galleryRequestId;
+    private FrameLayout drawerOverlay;
+    private LinearLayout uploadHistoryContainer;
+    private boolean drawerOpen;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -168,7 +180,7 @@ public final class MainActivity extends Activity {
         closeInternalViewer();
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(PAGE);
         LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(12), dp(10), dp(12), dp(10)); header.setBackgroundColor(NAVY);
-        back = smallButton("←"); back.setVisibility(View.GONE); header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        back = smallButton(currentFolder == null ? "☰" : "←"); header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
         title = text("I miei file", 21); title.setTypeface(bold); title.setGravity(Gravity.CENTER_VERTICAL); title.setSingleLine(); title.setTextColor(Color.WHITE); header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
         Button add = smallButton("＋"); header.addView(add, new LinearLayout.LayoutParams(dp(48), dp(48)));
         Button more = smallButton("⋮"); header.addView(more, new LinearLayout.LayoutParams(dp(48), dp(48)));
@@ -183,7 +195,8 @@ public final class MainActivity extends Activity {
         LinearLayout nav = new LinearLayout(this); nav.setGravity(Gravity.CENTER); nav.setPadding(dp(10), dp(8), dp(10), dp(8)); nav.setBackgroundColor(Color.WHITE);
         navFiles = navButton("▦  File"); navImages = navButton("▧  Immagini"); navTrash = navButton("♲  Cestino");
         nav.addView(navFiles, weighted()); nav.addView(navImages, weighted()); nav.addView(navTrash, weighted()); root.addView(nav);
-        setContentView(root);
+        FrameLayout shell = new FrameLayout(this); shell.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        buildDrawer(shell); setContentView(shell);
         ViewCompat.setOnApplyWindowInsetsListener(root, (view, windowInsets) -> {
             Insets bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars());
             header.setPadding(dp(12), bars.top + dp(8), dp(12), dp(8));
@@ -191,7 +204,7 @@ public final class MainActivity extends Activity {
             return windowInsets;
         });
 
-        back.setOnClickListener(v -> goBack());
+        back.setOnClickListener(v -> { if (currentFolder == null) openDrawer(); else goBack(); });
         add.setOnClickListener(v -> addMenu());
         more.setOnClickListener(v -> accountMenu());
         searchButton.setOnClickListener(v -> loadEntries());
@@ -200,6 +213,57 @@ public final class MainActivity extends Activity {
         list.setOnItemLongClickListener((parent, row, position, id) -> { entryMenu(currentEntries.get(position)); return true; });
         updateNavState();
         loadEntries();
+    }
+
+    private void buildDrawer(FrameLayout shell) {
+        drawerOverlay = new FrameLayout(this); drawerOverlay.setBackgroundColor(Color.argb(135, 5, 12, 24)); drawerOverlay.setVisibility(View.GONE); drawerOverlay.setOnClickListener(v -> closeDrawer());
+        LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL); panel.setPadding(dp(18), dp(18), dp(18), dp(18)); panel.setBackgroundColor(NAVY); panel.setOnClickListener(v -> {});
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(dp(310), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START); drawerOverlay.addView(panel, panelParams);
+
+        LinearLayout brandRow = new LinearLayout(this); brandRow.setGravity(Gravity.CENTER_VERTICAL); brandRow.setPadding(dp(8), 0, 0, dp(18));
+        TextView logo = text("A", 20); logo.setTypeface(bold); logo.setGravity(Gravity.CENTER); logo.setTextColor(NAVY); logo.setBackground(rounded(MINT, Color.TRANSPARENT, 10)); brandRow.addView(logo, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        TextView brandName = text("Arca Drive", 21); brandName.setTypeface(bold); brandName.setTextColor(Color.WHITE); brandName.setPadding(dp(12), 0, 0, 0); brandRow.addView(brandName); panel.addView(brandRow);
+
+        Button uploadButton = primary("＋  Carica file"); panel.addView(uploadButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); uploadButton.setOnClickListener(v -> { closeDrawer(); chooseFile(); });
+        TextView categoryLabel = drawerLabel("CATEGORIE"); categoryLabel.setPadding(dp(8), dp(24), 0, dp(8)); panel.addView(categoryLabel);
+        drawerNavFiles = drawerButton("▦   I miei file"); drawerNavImages = drawerButton("▧   Immagini"); drawerNavTrash = drawerButton("♲   Cestino");
+        panel.addView(drawerNavFiles, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavImages, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavTrash, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        drawerNavFiles.setOnClickListener(v -> { closeDrawer(); switchView("files"); }); drawerNavImages.setOnClickListener(v -> { closeDrawer(); switchView("images"); }); drawerNavTrash.setOnClickListener(v -> { closeDrawer(); switchView("trash"); });
+
+        TextView historyLabel = drawerLabel("CRONOLOGIA CARICAMENTI"); historyLabel.setPadding(dp(8), dp(24), 0, dp(8)); panel.addView(historyLabel);
+        ScrollView historyScroll = new ScrollView(this); uploadHistoryContainer = new LinearLayout(this); uploadHistoryContainer.setOrientation(LinearLayout.VERTICAL); historyScroll.addView(uploadHistoryContainer); panel.addView(historyScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        renderUploadHistory(); shell.addView(drawerOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        ViewCompat.setOnApplyWindowInsetsListener(panel, (view, insets) -> { Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()); panel.setPadding(dp(18), bars.top + dp(16), dp(18), bars.bottom + dp(16)); return insets; });
+    }
+
+    private TextView drawerLabel(String value) { TextView label = text(value, 11); label.setTypeface(bold); label.setTextColor(Color.rgb(126, 142, 169)); label.setLetterSpacing(.08f); return label; }
+
+    private Button drawerButton(String label) { Button button = new Button(this); button.setText(label); button.setAllCaps(false); button.setTextSize(16); button.setTypeface(regular); button.setTextColor(Color.rgb(183, 193, 211)); button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL); button.setPadding(dp(14), 0, dp(14), 0); button.setBackground(rounded(Color.TRANSPARENT, Color.TRANSPARENT, 10)); return button; }
+
+    private void openDrawer() { if (drawerOverlay == null) return; drawerOpen = true; renderUploadHistory(); updateNavState(); drawerOverlay.setAlpha(0f); drawerOverlay.setVisibility(View.VISIBLE); drawerOverlay.animate().alpha(1f).setDuration(160).start(); }
+    private void closeDrawer() { if (drawerOverlay == null) return; drawerOpen = false; drawerOverlay.setVisibility(View.GONE); }
+
+    private void recordUpload(String name) {
+        try {
+            JSONArray history = new JSONArray(getPreferences(MODE_PRIVATE).getString("upload_history", "[]"));
+            JSONArray next = new JSONArray(); next.put(new JSONObject().put("name", name).put("time", System.currentTimeMillis()));
+            for (int i = 0; i < Math.min(history.length(), 19); i++) next.put(history.getJSONObject(i));
+            getPreferences(MODE_PRIVATE).edit().putString("upload_history", next.toString()).apply(); renderUploadHistory();
+        } catch (Exception ignored) {}
+    }
+
+    private void renderUploadHistory() {
+        if (uploadHistoryContainer == null) return; uploadHistoryContainer.removeAllViews();
+        try {
+            JSONArray history = new JSONArray(getPreferences(MODE_PRIVATE).getString("upload_history", "[]"));
+            if (history.length() == 0) { TextView empty = text("Nessun caricamento dal telefono", 13); empty.setTextColor(Color.rgb(126, 142, 169)); empty.setPadding(dp(8), dp(8), dp(8), 0); uploadHistoryContainer.addView(empty); return; }
+            SimpleDateFormat format = new SimpleDateFormat("dd MMM · HH:mm", Locale.ITALIAN);
+            for (int i = 0; i < Math.min(history.length(), 8); i++) {
+                JSONObject item = history.getJSONObject(i); LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.VERTICAL); row.setPadding(dp(10), dp(9), dp(10), dp(9));
+                TextView name = text("↑  " + item.optString("name"), 13); name.setTypeface(medium); name.setTextColor(Color.WHITE); name.setSingleLine(); name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE); row.addView(name);
+                TextView time = text(format.format(new Date(item.optLong("time"))), 11); time.setTextColor(Color.rgb(126, 142, 169)); time.setPadding(dp(21), dp(3), 0, 0); row.addView(time); uploadHistoryContainer.addView(row);
+            }
+        } catch (Exception ignored) {}
     }
 
     private void loadEntries() {
@@ -228,7 +292,7 @@ public final class MainActivity extends Activity {
     private void openEntry(Entry entry) {
         if (entry.folder()) {
             if (currentFolder != null) folderStack.push(currentFolder);
-            currentFolder = entry; title.setText(entry.name); back.setVisibility(View.VISIBLE); search.setText(""); loadEntries();
+            currentFolder = entry; title.setText(entry.name); back.setText("←"); search.setText(""); loadEntries();
         } else preview(entry);
     }
 
@@ -332,7 +396,7 @@ public final class MainActivity extends Activity {
         Uri uri = data.getData(); String[] metadata = fileMetadata(uri);
         busy("Caricamento di " + metadata[0]);
         async(() -> { api.upload(getContentResolver(), uri, metadata[0], metadata[1], currentFolder == null ? null : currentFolder.id, sent -> {}); return true; }, ignored -> {
-            stopBusy(); toast("File caricato"); loadEntries();
+            stopBusy(); recordUpload(metadata[0]); toast("File caricato"); loadEntries();
         });
     }
 
@@ -402,13 +466,16 @@ public final class MainActivity extends Activity {
     private void switchView(String next) {
         view = next; currentFolder = null; folderStack.clear(); search.setText("");
         title.setText("files".equals(view) ? "I miei file" : "images".equals(view) ? "Immagini" : "Cestino");
-        back.setVisibility(View.GONE); updateNavState(); loadEntries();
+        back.setText("☰"); updateNavState(); loadEntries();
     }
 
     private void updateNavState() {
         styleNav(navFiles, "files".equals(view));
         styleNav(navImages, "images".equals(view));
         styleNav(navTrash, "trash".equals(view));
+        styleDrawerNav(drawerNavFiles, "files".equals(view));
+        styleDrawerNav(drawerNavImages, "images".equals(view));
+        styleDrawerNav(drawerNavTrash, "trash".equals(view));
     }
 
     private void styleNav(Button button, boolean active) {
@@ -418,14 +485,19 @@ public final class MainActivity extends Activity {
         button.setElevation(active ? dp(2) : 0);
     }
 
+    private void styleDrawerNav(Button button, boolean active) {
+        if (button == null) return; button.setTextColor(active ? Color.WHITE : Color.rgb(183, 193, 211));
+        button.setTypeface(active ? medium : regular); button.setBackground(rounded(active ? Color.rgb(29, 42, 67) : Color.TRANSPARENT, Color.TRANSPARENT, 10));
+    }
+
     private void goBack() {
         currentFolder = folderStack.poll();
         title.setText(currentFolder == null ? "I miei file" : currentFolder.name);
-        back.setVisibility(currentFolder == null ? View.GONE : View.VISIBLE); loadEntries();
+        back.setText(currentFolder == null ? "☰" : "←"); loadEntries();
     }
 
     @Override public void onBackPressed() {
-        if (internalViewer) showDrive(); else if (currentFolder != null) goBack(); else super.onBackPressed();
+        if (drawerOpen) closeDrawer(); else if (internalViewer) showDrive(); else if (currentFolder != null) goBack(); else super.onBackPressed();
     }
 
     private <T> void async(Task<T> task, Success<T> success) {
