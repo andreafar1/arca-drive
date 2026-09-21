@@ -83,6 +83,14 @@ final class ApiClient {
         request("PATCH", "/api/entries/" + id + "/move", new JSONObject().put("parentId", parentId == null ? JSONObject.NULL : parentId), true, true);
     }
 
+    void rename(String id, String name) throws Exception {
+        request("PATCH", "/api/entries/" + id + "/rename", new JSONObject().put("name", name), true, true);
+    }
+
+    void copy(String id, String parentId) throws Exception {
+        request("POST", "/api/entries/" + id + "/copy", new JSONObject().put("parentId", parentId == null ? JSONObject.NULL : parentId), true, true);
+    }
+
     void trash(String id) throws Exception { request("DELETE", "/api/entries/" + id, null, true, true); }
     void restore(String id) throws Exception { request("POST", "/api/entries/" + id + "/restore", new JSONObject(), true, true); }
     void permanentDelete(String id) throws Exception { request("DELETE", "/api/entries/" + id + "/permanent", null, true, true); }
