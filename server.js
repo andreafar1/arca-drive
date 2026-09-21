@@ -1065,6 +1065,87 @@ app.get('/api/entries/:id/content', auth, async (req, res) => {
   res.sendFile(filePath);
 });
 
+app.patch('/api/entries/:id/rename', auth, writable, async (req, res) => {
+  const entry = await canAccess(req.params.id, req.user.sub, true);
+  if (!entry || entry.is_trashed) return res.status(404).json({ error: 'Elemento non trovato' });
+  if (entry.is_system) return res.status(400).json({ error: 'La cartella Immagini è fissa e non può essere rinominata' });
+  try {
+    const name = cleanName(req.body.name);
+    const { rows } = await pool.query('UPDATE entries SET name=$1,updated_at=now() WHERE id=$2 RETURNING id,name,updated_at', [name, entry.id]);
+    await recordChange(pool, entry.id, 'updated', { name });
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/entries/:id/copy', auth, writable, async (req, res) => {
+  const source = await canAccess(req.params.id, req.user.sub, false);
+  if (!source || source.is_trashed) return res.status(404).json({ error: 'Elemento non trovato' });
+  const parentId = req.body.parentId || null;
+  let destination = null;
+  if (parentId) {
+    destination = await canAccess(parentId, req.user.sub, true);
+    if (!destination || destination.kind !== 'folder' || destination.is_trashed) return res.status(400).json({ error: 'Cartella di destinazione non valida' });
+    if (destination.is_system && (source.kind !== 'file' || !source.mime_type?.startsWith('image/'))) {
+      return res.status(400).json({ error: 'Nella cartella Immagini puoi copiare solo immagini' });
+    }
+    if (source.kind === 'folder') {
+      const { rows } = await pool.query(
+        `WITH RECURSIVE descendants AS (
+           SELECT id FROM entries WHERE id=$1
+           UNION ALL SELECT e.id FROM entries e JOIN descendants d ON e.parent_id=d.id
+         ) SELECT EXISTS(SELECT 1 FROM descendants WHERE id=$2) AS invalid`,
+        [source.id, parentId]
+      );
+      if (rows[0].invalid) return res.status(400).json({ error: 'Non puoi copiare una cartella dentro sé stessa' });
+    }
+  }
+
+  const duplicateName = value => {
+    const dot = value.lastIndexOf('.');
+    return dot > 0 ? `${value.slice(0, dot)} - copia${value.slice(dot)}` : `${value} - copia`;
+  };
+  const client = await pool.connect();
+  const copiedFiles = [];
+  try {
+    await client.query('BEGIN');
+    const clone = async (sourceId, newParentId, root = false) => {
+      const { rows } = await client.query('SELECT * FROM entries WHERE id=$1 AND is_trashed=false', [sourceId]);
+      const item = rows[0];
+      if (!item) throw new Error('Elemento sorgente non trovato');
+      let storageName = null;
+      if (item.kind === 'file') {
+        storageName = crypto.randomUUID();
+        await fs.copyFile(path.join(STORAGE_DIR, item.storage_name), path.join(STORAGE_DIR, storageName));
+        copiedFiles.push(storageName);
+      }
+      const name = root ? cleanName(req.body.name || duplicateName(item.name)) : item.name;
+      const inserted = await client.query(
+        `INSERT INTO entries(parent_id,owner_id,name,kind,mime_type,size_bytes,storage_name,is_system)
+         VALUES($1,$2,$3,$4,$5,$6,$7,false) RETURNING *`,
+        [newParentId, req.user.sub, name, item.kind, item.mime_type, item.size_bytes, storageName]
+      );
+      const copy = inserted.rows[0];
+      if (item.kind === 'folder') {
+        const children = await client.query('SELECT id FROM entries WHERE parent_id=$1 AND is_trashed=false ORDER BY created_at', [item.id]);
+        for (const child of children.rows) await clone(child.id, copy.id, false);
+      }
+      return copy;
+    };
+    const created = await clone(source.id, parentId, true);
+    await recordChange(client, created.id, 'created', { kind: created.kind, parentId, copiedFrom: source.id });
+    await client.query('COMMIT');
+    res.status(201).json(created);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    await Promise.all(copiedFiles.map(name => fs.unlink(path.join(STORAGE_DIR, name)).catch(() => {})));
+    res.status(400).json({ error: error.message });
+  } finally {
+    client.release();
+  }
+});
+
 app.patch('/api/entries/:id/move', auth, writable, async (req, res) => {
   const entry = await canAccess(req.params.id, req.user.sub, true);
   if (!entry || entry.is_trashed) return res.status(404).json({ error: 'Elemento non trovato' });
