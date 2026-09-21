@@ -23,12 +23,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Build debug APK
+      - name: Build debug APKs
         working-directory: android
-        run: gradle --no-daemon assembleDebug
+        run: gradle --no-daemon assemblePublicCloudDebug assembleLanDebug
       - uses: actions/upload-artifact@v4
         with:
           name: arca-drive-android-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            android/app/build/outputs/apk/publicCloud/debug/app-publicCloud-debug.apk
+            android/app/build/outputs/apk/lan/debug/app-lan-debug.apk
           if-no-files-found: error
           retention-days: 30
