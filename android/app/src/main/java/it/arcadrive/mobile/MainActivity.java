@@ -386,8 +386,8 @@ public final class MainActivity extends Activity {
             boolean pdf = entry.mime.contains("pdf");
             boolean image = entry.mime.startsWith("image/");
             boolean sheet = entry.name.matches("(?i).*\\.(xlsx?|ods|csv)$");
-            int background = entry.folder() ? Color.rgb(231, 241, 255) : pdf ? Color.rgb(255, 232, 235) : image ? Color.rgb(238, 234, 255) : sheet ? Color.rgb(220, 247, 238) : Color.rgb(234, 238, 245);
-            int foreground = entry.folder() ? Color.rgb(52, 126, 198) : pdf ? Color.rgb(214, 78, 94) : image ? Color.rgb(109, 95, 208) : sheet ? Color.rgb(18, 139, 108) : Color.rgb(82, 100, 130);
+            int background = entry.folder() ? Color.rgb(230, 250, 244) : pdf ? Color.rgb(255, 232, 235) : image ? Color.rgb(238, 234, 255) : sheet ? Color.rgb(220, 247, 238) : Color.rgb(234, 238, 245);
+            int foreground = entry.folder() ? Color.rgb(49, 199, 163) : pdf ? Color.rgb(214, 78, 94) : image ? Color.rgb(109, 95, 208) : sheet ? Color.rgb(18, 139, 108) : Color.rgb(82, 100, 130);
             paint.setStyle(Paint.Style.FILL); paint.setColor(background);
             canvas.drawRoundRect(new RectF(0, 0, getWidth(), getHeight()), dp(11), dp(11), paint);
             paint.setColor(foreground); paint.setStrokeWidth(dp(2)); paint.setStrokeCap(Paint.Cap.ROUND); paint.setStrokeJoin(Paint.Join.ROUND);
