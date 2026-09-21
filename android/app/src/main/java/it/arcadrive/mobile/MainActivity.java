@@ -480,6 +480,7 @@ public final class MainActivity extends Activity {
 
         @Override protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
+            paint.clearShadowLayer();
             boolean pdf = entry.mime.contains("pdf");
             boolean image = entry.mime.startsWith("image/");
             boolean sheet = entry.name.matches("(?i).*\\.(xlsx?|ods|csv)$");
@@ -495,9 +496,26 @@ public final class MainActivity extends Activity {
         }
 
         private void drawFolder(Canvas canvas) {
-            path.reset(); path.moveTo(dp(10), dp(17)); path.lineTo(dp(20), dp(17)); path.lineTo(dp(23), dp(13)); path.lineTo(dp(38), dp(13));
-            path.quadTo(dp(40), dp(13), dp(40), dp(16)); path.lineTo(dp(40), dp(34)); path.quadTo(dp(40), dp(37), dp(37), dp(37));
-            path.lineTo(dp(11), dp(37)); path.quadTo(dp(8), dp(37), dp(8), dp(34)); path.lineTo(dp(20), dp(21)); path.lineTo(dp(40), dp(21)); path.lineTo(dp(40), dp(18)); path.lineTo(dp(11), dp(18)); path.close(); canvas.drawPath(path, paint);
+            // Parte posteriore con linguetta, come una cartella aperta.
+            paint.setStyle(Paint.Style.FILL); paint.setColor(Color.rgb(22, 142, 117));
+            path.reset(); path.moveTo(dp(8), dp(17)); path.quadTo(dp(8), dp(13), dp(12), dp(13));
+            path.lineTo(dp(20), dp(13)); path.quadTo(dp(22), dp(13), dp(23), dp(10));
+            path.quadTo(dp(24), dp(8), dp(27), dp(8)); path.lineTo(dp(37), dp(8));
+            path.quadTo(dp(40), dp(8), dp(40), dp(12)); path.lineTo(dp(40), dp(33)); path.lineTo(dp(8), dp(33)); path.close(); canvas.drawPath(path, paint);
+
+            // Fogli visibili all'interno.
+            paint.setColor(Color.WHITE); canvas.drawRoundRect(new RectF(dp(11), dp(17), dp(37), dp(29)), dp(2), dp(2), paint);
+            paint.setColor(Color.rgb(177, 198, 195)); paint.setStrokeWidth(dp(1));
+            canvas.drawLine(dp(13), dp(20), dp(35), dp(20), paint); canvas.drawLine(dp(13), dp(23), dp(35), dp(23), paint); canvas.drawLine(dp(13), dp(26), dp(31), dp(26), paint);
+
+            // Pannello frontale rialzato con rientro superiore.
+            paint.setColor(Color.rgb(49, 199, 163)); paint.setShadowLayer(dp(2), 0, dp(1), Color.argb(70, 8, 66, 55));
+            path.reset(); path.moveTo(dp(7), dp(23)); path.quadTo(dp(7), dp(20), dp(11), dp(20));
+            path.lineTo(dp(29), dp(20)); path.quadTo(dp(32), dp(20), dp(34), dp(16));
+            path.quadTo(dp(35), dp(14), dp(38), dp(14)); path.lineTo(dp(41), dp(14));
+            path.quadTo(dp(43), dp(14), dp(42), dp(18)); path.lineTo(dp(40), dp(36));
+            path.quadTo(dp(40), dp(39), dp(37), dp(39)); path.lineTo(dp(10), dp(39));
+            path.quadTo(dp(7), dp(39), dp(7), dp(36)); path.close(); canvas.drawPath(path, paint); paint.clearShadowLayer();
         }
 
         private void drawDocument(Canvas canvas, String label) {
