@@ -22,7 +22,24 @@ Content-Type: application/json
 }
 ```
 
-La risposta contiene `accessToken`, `refreshToken`, `expiresIn` e `user`.
+Senza 2FA la risposta contiene `accessToken`, `refreshToken`, `expiresIn` e `user`.
+
+Se l'utente ha attivato il secondo fattore, la risposta ha stato `202`:
+
+```json
+{ "requiresTwoFactor": true, "challengeToken": "...", "expiresIn": 300 }
+```
+
+Completa l'accesso entro cinque minuti:
+
+```http
+POST /api/auth/2fa
+Content-Type: application/json
+
+{ "challengeToken": "...", "code": "123456" }
+```
+
+`code` può essere il codice TOTP dell'app di autenticazione oppure uno dei codici di recupero. La risposta contiene la sessione completa. Dopo cinque tentativi non validi è necessario ripetere il login.
 
 ## Rinnovo
 
