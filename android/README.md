@@ -15,7 +15,10 @@ Client Android nativo per Arca Drive, compatibile con Android 8.0 (API 26) e ver
 - spostamento di file e cartelle;
 - ripristino ed eliminazione definitiva dal cestino.
 
-Il client accetta esclusivamente un URL HTTPS con certificato valido, così password, token e documenti non transitano in chiaro.
+Sono disponibili due varianti:
+
+- `publicCloud`: accetta esclusivamente URL HTTPS con certificato valido;
+- `lan`: accetta HTTPS e HTTP soltanto per indirizzi locali privati (`10.x.x.x`, `172.16-31.x.x`, `192.168.x.x`, localhost e `.local`). Non usare HTTP attraverso Internet, perché password, token e documenti transiterebbero in chiaro.
 
 ## Build locale
 
@@ -23,9 +26,9 @@ Installa Android SDK 35, Java 17 e Gradle 8.9, quindi:
 
 ```bash
 cd android
-gradle assembleDebug
+gradle assemblePublicCloudDebug assembleLanDebug
 ```
 
-L'APK sarà disponibile in `app/build/outputs/apk/debug/app-debug.apk`.
+Gli APK saranno disponibili nelle cartelle `app/build/outputs/apk/publicCloud/debug` e `app/build/outputs/apk/lan/debug`.
 
 In alternativa avvia il workflow **Android APK** dalla scheda Actions del repository e scarica l'artefatto prodotto.
