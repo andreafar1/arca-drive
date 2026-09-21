@@ -12,6 +12,21 @@ android {
         versionName '1.0.0'
     }
 
+    buildFeatures { buildConfig true }
+    flavorDimensions += 'connection'
+    productFlavors {
+        publicCloud {
+            dimension 'connection'
+            buildConfigField 'boolean', 'ALLOW_LOCAL_HTTP', 'false'
+        }
+        lan {
+            dimension 'connection'
+            applicationIdSuffix '.lan'
+            versionNameSuffix '-lan'
+            buildConfigField 'boolean', 'ALLOW_LOCAL_HTTP', 'true'
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
