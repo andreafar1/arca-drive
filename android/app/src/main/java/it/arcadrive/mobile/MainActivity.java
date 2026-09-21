@@ -6,6 +6,10 @@ import android.app.ProgressDialog;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.InsetDrawable;
@@ -60,6 +64,9 @@ public final class MainActivity extends Activity {
     private EditText search;
     private ListView list;
     private Button back;
+    private Button navFiles;
+    private Button navImages;
+    private Button navTrash;
     private ProgressDialog progress;
 
     @Override public void onCreate(Bundle state) {
@@ -161,8 +168,8 @@ public final class MainActivity extends Activity {
 
         list = new ListView(this); list.setDividerHeight(0); list.setPadding(dp(8), dp(4), dp(8), dp(6)); list.setClipToPadding(false); list.setBackgroundColor(PAGE); root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         LinearLayout nav = new LinearLayout(this); nav.setGravity(Gravity.CENTER); nav.setPadding(dp(10), dp(8), dp(10), dp(8)); nav.setBackgroundColor(Color.WHITE);
-        Button files = navButton("File"); Button images = navButton("Immagini"); Button trash = navButton("Cestino");
-        nav.addView(files, weighted()); nav.addView(images, weighted()); nav.addView(trash, weighted()); root.addView(nav);
+        navFiles = navButton("▦  File"); navImages = navButton("▧  Immagini"); navTrash = navButton("♲  Cestino");
+        nav.addView(navFiles, weighted()); nav.addView(navImages, weighted()); nav.addView(navTrash, weighted()); root.addView(nav);
         setContentView(root);
         ViewCompat.setOnApplyWindowInsetsListener(root, (view, windowInsets) -> {
             Insets bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars());
@@ -175,9 +182,10 @@ public final class MainActivity extends Activity {
         add.setOnClickListener(v -> addMenu());
         more.setOnClickListener(v -> accountMenu());
         searchButton.setOnClickListener(v -> loadEntries());
-        files.setOnClickListener(v -> switchView("files")); images.setOnClickListener(v -> switchView("images")); trash.setOnClickListener(v -> switchView("trash"));
+        navFiles.setOnClickListener(v -> switchView("files")); navImages.setOnClickListener(v -> switchView("images")); navTrash.setOnClickListener(v -> switchView("trash"));
         list.setOnItemClickListener((parent, row, position, id) -> openEntry(currentEntries.get(position)));
         list.setOnItemLongClickListener((parent, row, position, id) -> { entryMenu(currentEntries.get(position)); return true; });
+        updateNavState();
         loadEntries();
     }
 
@@ -191,9 +199,9 @@ public final class MainActivity extends Activity {
                     Entry entry = getItem(position);
                     LinearLayout row = new LinearLayout(MainActivity.this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(16), dp(13), dp(16), dp(13));
                     row.setBackground(new InsetDrawable(rounded(Color.WHITE, LINE, 13), 0, dp(4), 0, dp(4)));
-                    TextView badge = text(entry.folder() ? "DIR" : icon(entry), 10); badge.setTypeface(bold); badge.setGravity(Gravity.CENTER); badge.setTextColor(entry.folder() ? Color.rgb(82, 100, 130) : entry.mime.startsWith("image/") ? Color.rgb(14, 116, 95) : entry.mime.contains("pdf") ? Color.rgb(190, 55, 70) : Color.rgb(45, 83, 150));
-                    badge.setBackground(rounded(entry.folder() ? Color.rgb(234, 238, 245) : entry.mime.startsWith("image/") ? Color.rgb(220, 247, 238) : entry.mime.contains("pdf") ? Color.rgb(255, 231, 234) : Color.rgb(229, 238, 255), Color.TRANSPARENT, 9));
-                    row.addView(badge, new LinearLayout.LayoutParams(dp(48), dp(40)));
+                    FileBadgeView badge = new FileBadgeView(entry);
+                    badge.setElevation(dp(1));
+                    row.addView(badge, new LinearLayout.LayoutParams(dp(48), dp(48)));
                     LinearLayout labels = new LinearLayout(MainActivity.this); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(13), 0, 0, 0);
                     TextView name = text(entry.name, 15); name.setTypeface(medium); name.setMaxLines(2); labels.addView(name);
                     TextView detail = text(entry.folder() ? "Cartella" : formatSize(entry.size), 13); detail.setTextColor(Color.rgb(112, 124, 143)); detail.setPadding(0, dp(3), 0, 0); labels.addView(detail);
@@ -315,7 +323,20 @@ public final class MainActivity extends Activity {
     private void switchView(String next) {
         view = next; currentFolder = null; folderStack.clear(); search.setText("");
         title.setText("files".equals(view) ? "I miei file" : "images".equals(view) ? "Immagini" : "Cestino");
-        back.setVisibility(View.GONE); loadEntries();
+        back.setVisibility(View.GONE); updateNavState(); loadEntries();
+    }
+
+    private void updateNavState() {
+        styleNav(navFiles, "files".equals(view));
+        styleNav(navImages, "images".equals(view));
+        styleNav(navTrash, "trash".equals(view));
+    }
+
+    private void styleNav(Button button, boolean active) {
+        if (button == null) return;
+        button.setTextColor(active ? Color.WHITE : Color.rgb(91, 104, 125));
+        button.setBackground(rounded(active ? NAVY : Color.TRANSPARENT, Color.TRANSPARENT, 12));
+        button.setElevation(active ? dp(2) : 0);
     }
 
     private void goBack() {
@@ -345,14 +366,61 @@ public final class MainActivity extends Activity {
     private Button primary(String label) { Button b = new Button(this); b.setText(label); b.setAllCaps(false); b.setTextSize(15); b.setTypeface(bold); b.setTextColor(NAVY); b.setBackground(rounded(MINT, Color.TRANSPARENT, 12)); return b; }
     private Button secondary(String label) { Button b = new Button(this); b.setText(label); b.setAllCaps(false); b.setTextSize(14); b.setTypeface(medium); b.setTextColor(NAVY); b.setBackground(rounded(Color.rgb(235, 239, 244), Color.TRANSPARENT, 12)); return b; }
     private Button smallButton(String label) { Button b = new Button(this); b.setText(label); b.setAllCaps(false); b.setTextSize(23); b.setTypeface(regular); b.setTextColor(Color.WHITE); b.setMinWidth(0); b.setMinimumWidth(0); b.setPadding(0, 0, 0, 0); b.setBackground(rounded(Color.TRANSPARENT, Color.TRANSPARENT, 12)); return b; }
-    private Button navButton(String label) { Button b = secondary(label); b.setTextSize(13); b.setBackground(rounded(Color.rgb(242, 245, 249), Color.TRANSPARENT, 12)); return b; }
+    private Button navButton(String label) { Button b = secondary(label); b.setTextSize(13); b.setPadding(dp(6), 0, dp(6), 0); b.setBackground(rounded(Color.TRANSPARENT, Color.TRANSPARENT, 12)); return b; }
     private LinearLayout.LayoutParams matchWrap() { return new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)); }
     private LinearLayout.LayoutParams spaced() { LinearLayout.LayoutParams p = matchWrap(); p.topMargin = dp(12); return p; }
-    private LinearLayout.LayoutParams weighted() { return new LinearLayout.LayoutParams(0, dp(55), 1); }
+    private LinearLayout.LayoutParams weighted() { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(50), 1); p.setMargins(dp(4), 0, dp(4), 0); return p; }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private GradientDrawable rounded(int fill, int stroke, int radius) { GradientDrawable shape = new GradientDrawable(); shape.setColor(fill); shape.setCornerRadius(dp(radius)); if (stroke != Color.TRANSPARENT) shape.setStroke(dp(1), stroke); return shape; }
     private static String icon(Entry e) { return e.mime.startsWith("image/") ? "IMG" : e.mime.contains("pdf") ? "PDF" : "DOC"; }
     private static String formatSize(long bytes) { if (bytes < 1024) return bytes + " B"; if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024d); return String.format("%.1f MB", bytes / 1048576d); }
+
+    private final class FileBadgeView extends View {
+        private final Entry entry;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path path = new Path();
+        FileBadgeView(Entry entry) { super(MainActivity.this); this.entry = entry; setLayerType(View.LAYER_TYPE_SOFTWARE, null); }
+
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            boolean pdf = entry.mime.contains("pdf");
+            boolean image = entry.mime.startsWith("image/");
+            boolean sheet = entry.name.matches("(?i).*\\.(xlsx?|ods|csv)$");
+            int background = entry.folder() ? Color.rgb(231, 241, 255) : pdf ? Color.rgb(255, 232, 235) : image ? Color.rgb(238, 234, 255) : sheet ? Color.rgb(220, 247, 238) : Color.rgb(234, 238, 245);
+            int foreground = entry.folder() ? Color.rgb(52, 126, 198) : pdf ? Color.rgb(214, 78, 94) : image ? Color.rgb(109, 95, 208) : sheet ? Color.rgb(18, 139, 108) : Color.rgb(82, 100, 130);
+            paint.setStyle(Paint.Style.FILL); paint.setColor(background);
+            canvas.drawRoundRect(new RectF(0, 0, getWidth(), getHeight()), dp(11), dp(11), paint);
+            paint.setColor(foreground); paint.setStrokeWidth(dp(2)); paint.setStrokeCap(Paint.Cap.ROUND); paint.setStrokeJoin(Paint.Join.ROUND);
+            if (entry.folder()) drawFolder(canvas);
+            else if (image) drawImage(canvas);
+            else if (sheet) drawSheet(canvas);
+            else drawDocument(canvas, pdf ? "PDF" : "DOC");
+        }
+
+        private void drawFolder(Canvas canvas) {
+            path.reset(); path.moveTo(dp(10), dp(17)); path.lineTo(dp(20), dp(17)); path.lineTo(dp(23), dp(13)); path.lineTo(dp(38), dp(13));
+            path.quadTo(dp(40), dp(13), dp(40), dp(16)); path.lineTo(dp(40), dp(34)); path.quadTo(dp(40), dp(37), dp(37), dp(37));
+            path.lineTo(dp(11), dp(37)); path.quadTo(dp(8), dp(37), dp(8), dp(34)); path.lineTo(dp(20), dp(21)); path.lineTo(dp(40), dp(21)); path.lineTo(dp(40), dp(18)); path.lineTo(dp(11), dp(18)); path.close(); canvas.drawPath(path, paint);
+        }
+
+        private void drawDocument(Canvas canvas, String label) {
+            paint.setStyle(Paint.Style.STROKE); canvas.drawRoundRect(new RectF(dp(13), dp(8), dp(35), dp(40)), dp(3), dp(3), paint);
+            paint.setStyle(Paint.Style.FILL); paint.setTypeface(bold); paint.setTextAlign(Paint.Align.CENTER); paint.setTextSize(dp(label.length() > 3 ? 7 : 8));
+            canvas.drawText(label, dp(24), dp(28), paint);
+        }
+
+        private void drawImage(Canvas canvas) {
+            paint.setStyle(Paint.Style.STROKE); canvas.drawRoundRect(new RectF(dp(9), dp(10), dp(39), dp(38)), dp(4), dp(4), paint);
+            paint.setStyle(Paint.Style.FILL); canvas.drawCircle(dp(31), dp(18), dp(3), paint);
+            path.reset(); path.moveTo(dp(12), dp(34)); path.lineTo(dp(21), dp(24)); path.lineTo(dp(27), dp(30)); path.lineTo(dp(31), dp(26)); path.lineTo(dp(37), dp(34)); path.close(); canvas.drawPath(path, paint);
+        }
+
+        private void drawSheet(Canvas canvas) {
+            paint.setStyle(Paint.Style.STROKE); canvas.drawRoundRect(new RectF(dp(10), dp(9), dp(38), dp(39)), dp(3), dp(3), paint);
+            canvas.drawLine(dp(19), dp(10), dp(19), dp(38), paint); canvas.drawLine(dp(29), dp(10), dp(29), dp(38), paint);
+            canvas.drawLine(dp(11), dp(19), dp(37), dp(19), paint); canvas.drawLine(dp(11), dp(29), dp(37), dp(29), paint);
+        }
+    }
     interface Task<T> { T run() throws Exception; }
     interface Success<T> { void accept(T value); }
 }
