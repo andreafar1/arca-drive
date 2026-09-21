@@ -4,6 +4,131 @@
   gap: 9px;
 }
 
+.auth-card #twoFactorField small {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.auth-secondary {
+  border: 1px solid var(--line) !important;
+  background: #fff !important;
+  color: var(--ink) !important;
+}
+
+.options-panel {
+  padding: 24px;
+}
+
+.security-card {
+  max-width: 720px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.security-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.security-heading small {
+  color: var(--muted);
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.security-heading h2 {
+  margin: 5px 0 0;
+}
+
+.security-card > p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.security-status {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #edf0f4;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.security-status.enabled {
+  background: #dcf7ee;
+  color: #08745f;
+}
+
+.security-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.security-actions button,
+.copy-codes {
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--mint);
+  color: #10372e;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.security-actions .secondary,
+.copy-codes {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+}
+
+.security-actions .danger-outline {
+  border: 1px solid #e9a5ad;
+  background: #fff;
+  color: var(--danger);
+}
+
+.security-note {
+  font-size: 14px;
+}
+
+.totp-qr {
+  display: block;
+  width: 220px;
+  max-width: 100%;
+  margin: 16px auto;
+  border-radius: 8px;
+}
+
+.manual-key {
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.manual-key code {
+  user-select: all;
+}
+
+.recovery-codes {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f5f7fa;
+  font-size: 16px;
+  line-height: 1.6;
+  text-align: center;
+  user-select: all;
+}
+
 .table-head,
 .file-row {
   grid-template-columns: 38px 2fr 1fr 1fr .7fr 40px;
