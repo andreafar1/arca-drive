@@ -14,9 +14,11 @@
       <div class="brand"><b>A</b><span>Arca Drive</span></div>
       <p id="authIntro">Accedi al tuo spazio aziendale.</p>
       <label id="nameField" class="hidden">Nome<input id="name" autocomplete="name"></label>
-      <label>Email<input id="email" type="email" autocomplete="email" required></label>
-      <label>Password<input id="password" type="password" minlength="10" autocomplete="current-password" required></label>
+      <label id="emailField">Email<input id="email" type="email" autocomplete="email" required></label>
+      <label id="passwordField">Password<input id="password" type="password" minlength="10" autocomplete="current-password" required></label>
+      <label id="twoFactorField" class="hidden">Codice di verifica<input id="twoFactorCode" inputmode="text" autocomplete="one-time-code" maxlength="11"><small>Inserisci il codice dell’app oppure un codice di recupero.</small></label>
       <button id="authSubmit" type="submit">Accedi</button>
+      <button id="cancelTwoFactor" class="auth-secondary hidden" type="button">Torna all’accesso</button>
       <small id="authError"></small>
     </form>
   </div>
@@ -29,6 +31,7 @@
         <button class="nav active" data-view="files">▦ I miei file</button>
         <button class="nav" data-view="images">▧ Immagini</button>
         <button class="nav" data-view="trash">♲ Cestino</button>
+        <button class="nav" data-view="options">⚙ Opzioni</button>
         <button class="nav admin-only" data-view="people">♙ Persone</button>
       </nav>
       <div class="storage-summary">
@@ -51,7 +54,7 @@
             <button id="folderBack" class="folder-back hidden" type="button" aria-label="Torna alla cartella precedente">←</button>
             <div><nav id="breadcrumb" class="breadcrumb-path" aria-label="Percorso cartelle"></nav><h1 id="title">I miei file</h1></div>
           </div>
-          <div class="page-actions">
+          <div id="pageActions" class="page-actions">
             <button id="newFolder">＋ Nuova cartella</button>
             <label for="upload" class="upload-top">⇧ Carica file</label>
           </div>
@@ -73,6 +76,21 @@
         <div id="people" class="panel hidden">
           <div class="people-head"><div><strong>Utenti</strong><small>Gestisci gli accessi</small></div><button id="newUser">＋ Nuovo utente</button></div>
           <div id="users"></div>
+        </div>
+        <div id="options" class="panel options-panel hidden">
+          <div class="security-card">
+            <div class="security-heading">
+              <div><small>SICUREZZA ACCOUNT</small><h2>Autenticazione a due fattori</h2></div>
+              <span id="twoFactorStatus" class="security-status">Caricamento…</span>
+            </div>
+            <p>Proteggi l’accesso con un codice temporaneo generato da un’app di autenticazione.</p>
+            <p id="recoveryStatus" class="security-note hidden"></p>
+            <div class="security-actions">
+              <button id="enableTwoFactor" type="button">Attiva autenticazione a due fattori</button>
+              <button id="regenerateRecoveryCodes" class="secondary hidden" type="button">Genera nuovi codici di recupero</button>
+              <button id="disableTwoFactor" class="danger-outline hidden" type="button">Disattiva</button>
+            </div>
+          </div>
         </div>
       </section>
     </main>
