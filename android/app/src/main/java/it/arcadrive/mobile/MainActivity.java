@@ -56,7 +56,7 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         secure = new SecureStore(this);
         server = getPreferences(MODE_PRIVATE).getString("server", "");
-        api = new ApiClient(secure, server);
+        api = new ApiClient(secure, server, BuildConfig.ALLOW_LOCAL_HTTP);
         if (server.isBlank()) showServerSetup();
         else if (secure.get("access") == null) showLogin();
         else validateSession();
@@ -69,12 +69,15 @@ public final class MainActivity extends Activity {
         intro.setPadding(0, dp(12), 0, dp(20)); page.addView(intro);
         EditText url = input("https://drive.azienda.it", InputType.TYPE_TEXT_VARIATION_URI);
         url.setText(server); page.addView(url, matchWrap());
-        TextView warning = text("Il client accetta esclusivamente server HTTPS con un certificato valido.", 13);
+        TextView warning = text(BuildConfig.ALLOW_LOCAL_HTTP
+            ? "Questa variante consente HTTP solo nella rete locale. Per Internet utilizza sempre HTTPS."
+            : "Il client accetta esclusivamente server HTTPS con un certificato valido.", 13);
         warning.setTextColor(Color.rgb(170, 75, 30)); warning.setPadding(0, dp(10), 0, dp(16)); page.addView(warning);
         Button connect = primary("Continua"); page.addView(connect, matchWrap());
         connect.setOnClickListener(v -> {
             String candidate = url.getText().toString().trim().replaceAll("/+$", "");
-            if (!candidate.matches("https://.+")) { toast("Inserisci un indirizzo https:// valido"); return; }
+            boolean allowed = candidate.matches("https://.+") || (BuildConfig.ALLOW_LOCAL_HTTP && ApiClient.isLocalHttp(candidate));
+            if (!allowed) { toast(BuildConfig.ALLOW_LOCAL_HTTP ? "Usa HTTPS oppure un IP HTTP della rete locale" : "Inserisci un indirizzo https:// valido"); return; }
             server = candidate;
             getPreferences(MODE_PRIVATE).edit().putString("server", server).apply();
             api.setBaseUrl(server);
