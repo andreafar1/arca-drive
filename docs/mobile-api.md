@@ -117,6 +117,8 @@ Riprendi dal valore `offset`. Le sessioni incomplete scadono dopo 24 ore.
 - `GET /api/entries`
 - `POST /api/folders`
 - `GET /api/entries/:id/content`
+- `PATCH /api/entries/:id/rename` con `{ "name": "Nuovo nome" }`
+- `POST /api/entries/:id/copy` con `{ "parentId": null }`
 - `PATCH /api/entries/:id/move`
 - `DELETE /api/entries/:id`
 - `POST /api/entries/:id/restore`
