@@ -290,6 +290,9 @@ public final class MainActivity extends Activity {
                     row.addView(labels, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
                     Button actions = new Button(MainActivity.this); actions.setText("⋮"); actions.setTextSize(21); actions.setTextColor(Color.rgb(91, 104, 125)); actions.setMinWidth(0); actions.setMinimumWidth(0); actions.setPadding(0, 0, 0, 0); actions.setBackground(rounded(Color.TRANSPARENT, Color.TRANSPARENT, 10)); actions.setContentDescription("Azioni per " + entry.name); actions.setOnClickListener(v -> entryMenu(entry));
                     row.addView(actions, new LinearLayout.LayoutParams(dp(42), dp(42)));
+                    row.setClickable(true);
+                    row.setOnClickListener(v -> openEntry(entry));
+                    row.setOnLongClickListener(v -> { entryMenu(entry); return true; });
                     return row;
                 }
             });
