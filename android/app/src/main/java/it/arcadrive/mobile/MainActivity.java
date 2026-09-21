@@ -6,6 +6,8 @@ import android.app.ProgressDialog;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -15,16 +17,20 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.InsetDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
+import android.graphics.pdf.PdfRenderer;
 import android.provider.OpenableColumns;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
+import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -68,6 +74,12 @@ public final class MainActivity extends Activity {
     private Button navImages;
     private Button navTrash;
     private ProgressDialog progress;
+    private boolean internalViewer;
+    private PdfRenderer activePdfRenderer;
+    private ParcelFileDescriptor activePdfDescriptor;
+    private List<Entry> galleryEntries = new ArrayList<>();
+    private int galleryIndex;
+    private int galleryRequestId;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -153,6 +165,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showDrive() {
+        closeInternalViewer();
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(PAGE);
         LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(12), dp(10), dp(12), dp(10)); header.setBackgroundColor(NAVY);
         back = smallButton("←"); back.setVisibility(View.GONE); header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
@@ -227,13 +240,79 @@ public final class MainActivity extends Activity {
             return api.download(entry.id, new File(directory, safe));
         }, file -> {
             stopBusy();
-            try {
+            if (entry.mime.contains("pdf")) {
+                showPdf(file, entry);
+            } else if (entry.mime.startsWith("image/")) {
+                galleryEntries = new ArrayList<>();
+                for (Entry item : currentEntries) if (!item.folder() && item.mime.startsWith("image/")) galleryEntries.add(item);
+                galleryIndex = Math.max(0, galleryEntries.indexOf(entry));
+                showImageGallery();
+            } else try {
                 Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", file);
                 Intent intent = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, entry.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 startActivity(Intent.createChooser(intent, "Apri con"));
             } catch (Exception error) { toast("Nessuna app disponibile per aprire questo formato"); }
         });
     }
+
+    private void showPdf(File file, Entry entry) {
+        closeInternalViewer(); internalViewer = true;
+        try {
+            activePdfDescriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
+            activePdfRenderer = new PdfRenderer(activePdfDescriptor);
+            LinearLayout root = viewerPage(); root.addView(viewerHeader(entry.name));
+            ListView pages = new ListView(this); pages.setDividerHeight(dp(10)); pages.setDivider(new android.graphics.drawable.ColorDrawable(PAGE)); pages.setPadding(dp(10), dp(10), dp(10), dp(10)); pages.setClipToPadding(false); pages.setBackgroundColor(Color.rgb(225, 230, 237));
+            pages.setAdapter(new PdfPageAdapter());
+            root.addView(pages, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1)); setContentView(root);
+        } catch (Exception error) { closeInternalViewer(); fail(error); showDrive(); }
+    }
+
+    private void showImageGallery() {
+        closePdf(); internalViewer = true;
+        if (galleryEntries.isEmpty()) { showDrive(); return; }
+        Entry entry = galleryEntries.get(galleryIndex);
+        LinearLayout root = viewerPage(); root.addView(viewerHeader(entry.name));
+        ImageView image = new ImageView(this); image.setScaleType(ImageView.ScaleType.FIT_CENTER); image.setBackgroundColor(Color.rgb(238, 241, 245)); image.setContentDescription("Anteprima " + entry.name);
+        root.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        LinearLayout controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER); controls.setPadding(dp(14), dp(10), dp(14), dp(10)); controls.setBackgroundColor(Color.WHITE);
+        Button previous = secondary("←  Precedente"); Button next = secondary("Successiva  →");
+        TextView counter = text((galleryIndex + 1) + " di " + galleryEntries.size(), 13); counter.setGravity(Gravity.CENTER); counter.setTextColor(Color.rgb(91, 104, 125));
+        controls.addView(previous, new LinearLayout.LayoutParams(0, dp(48), 1)); controls.addView(counter, new LinearLayout.LayoutParams(dp(80), dp(48))); controls.addView(next, new LinearLayout.LayoutParams(0, dp(48), 1)); root.addView(controls); setContentView(root);
+        previous.setEnabled(galleryIndex > 0); next.setEnabled(galleryIndex < galleryEntries.size() - 1);
+        previous.setOnClickListener(v -> navigateGallery(-1)); next.setOnClickListener(v -> navigateGallery(1));
+        final float[] touchX = new float[1];
+        image.setOnTouchListener((v, event) -> {
+            if (event.getAction() == android.view.MotionEvent.ACTION_DOWN) { touchX[0] = event.getX(); return true; }
+            if (event.getAction() == android.view.MotionEvent.ACTION_UP) { float distance = event.getX() - touchX[0]; if (Math.abs(distance) > dp(55)) navigateGallery(distance < 0 ? 1 : -1); else v.performClick(); return true; }
+            return true;
+        });
+        int requestId = ++galleryRequestId; busy("Caricamento immagine…");
+        async(() -> {
+            File directory = new File(getCacheDir(), "previews"); directory.mkdirs(); File destination = new File(directory, "image-" + entry.id);
+            api.download(entry.id, destination); return decodeSampled(destination, getResources().getDisplayMetrics().widthPixels * 2);
+        }, bitmap -> { stopBusy(); if (requestId == galleryRequestId && internalViewer) image.setImageBitmap(bitmap); });
+    }
+
+    private void navigateGallery(int direction) { int next = galleryIndex + direction; if (next < 0 || next >= galleryEntries.size()) return; galleryIndex = next; showImageGallery(); }
+
+    private LinearLayout viewerPage() { LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(PAGE); return root; }
+
+    private LinearLayout viewerHeader(String name) {
+        LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(10), dp(10), dp(10), dp(8)); header.setBackgroundColor(NAVY);
+        Button close = smallButton("←"); header.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        TextView nameView = text(name, 17); nameView.setTypeface(medium); nameView.setSingleLine(); nameView.setEllipsize(android.text.TextUtils.TruncateAt.END); nameView.setTextColor(Color.WHITE); nameView.setGravity(Gravity.CENTER_VERTICAL); header.addView(nameView, new LinearLayout.LayoutParams(0, dp(48), 1));
+        close.setOnClickListener(v -> showDrive());
+        ViewCompat.setOnApplyWindowInsetsListener(header, (view, insets) -> { Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()); header.setPadding(dp(10), bars.top + dp(8), dp(10), dp(8)); return insets; }); return header;
+    }
+
+    private Bitmap decodeSampled(File file, int maximumWidth) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true; BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+        int sample = 1; while (bounds.outWidth / sample > maximumWidth) sample *= 2;
+        BitmapFactory.Options options = new BitmapFactory.Options(); options.inSampleSize = Math.max(1, sample); return BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+    }
+
+    private void closeInternalViewer() { internalViewer = false; galleryRequestId++; closePdf(); }
+    private void closePdf() { if (activePdfRenderer != null) { activePdfRenderer.close(); activePdfRenderer = null; } if (activePdfDescriptor != null) { try { activePdfDescriptor.close(); } catch (Exception ignored) {} activePdfDescriptor = null; } }
 
     private void addMenu() {
         if (!"files".equals(view)) { chooseFile(); return; }
@@ -346,7 +425,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override public void onBackPressed() {
-        if (currentFolder != null) goBack(); else super.onBackPressed();
+        if (internalViewer) showDrive(); else if (currentFolder != null) goBack(); else super.onBackPressed();
     }
 
     private <T> void async(Task<T> task, Success<T> success) {
@@ -374,6 +453,24 @@ public final class MainActivity extends Activity {
     private GradientDrawable rounded(int fill, int stroke, int radius) { GradientDrawable shape = new GradientDrawable(); shape.setColor(fill); shape.setCornerRadius(dp(radius)); if (stroke != Color.TRANSPARENT) shape.setStroke(dp(1), stroke); return shape; }
     private static String icon(Entry e) { return e.mime.startsWith("image/") ? "IMG" : e.mime.contains("pdf") ? "PDF" : "DOC"; }
     private static String formatSize(long bytes) { if (bytes < 1024) return bytes + " B"; if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024d); return String.format("%.1f MB", bytes / 1048576d); }
+
+    private final class PdfPageAdapter extends BaseAdapter {
+        @Override public int getCount() { return activePdfRenderer == null ? 0 : activePdfRenderer.getPageCount(); }
+        @Override public Object getItem(int position) { return position; }
+        @Override public long getItemId(int position) { return position; }
+        @Override public View getView(int position, View convertView, ViewGroup parent) {
+            ImageView pageView = convertView instanceof ImageView ? (ImageView) convertView : new ImageView(MainActivity.this);
+            if (pageView.getDrawable() instanceof android.graphics.drawable.BitmapDrawable) {
+                Bitmap previous = ((android.graphics.drawable.BitmapDrawable) pageView.getDrawable()).getBitmap(); if (previous != null && !previous.isRecycled()) previous.recycle();
+            }
+            PdfRenderer.Page page = activePdfRenderer.openPage(position);
+            int width = Math.max(dp(280), getResources().getDisplayMetrics().widthPixels - dp(20));
+            int height = Math.max(1, Math.round(width * (page.getHeight() / (float) page.getWidth())));
+            Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888); bitmap.eraseColor(Color.WHITE);
+            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY); page.close();
+            pageView.setImageBitmap(bitmap); pageView.setAdjustViewBounds(true); pageView.setScaleType(ImageView.ScaleType.FIT_CENTER); pageView.setBackgroundColor(Color.WHITE); pageView.setContentDescription("Pagina " + (position + 1)); return pageView;
+        }
+    }
 
     private final class FileBadgeView extends View {
         private final Entry entry;
