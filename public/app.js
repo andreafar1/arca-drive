@@ -2,6 +2,7 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 let token = localStorage.getItem('arca_token');
 let refreshToken = localStorage.getItem('arca_refresh_token');
+let twoFactorChallenge = null;
 let user = null;
 let view = 'files';
 let currentFolder = null;
@@ -40,7 +41,7 @@ async function api(url, options = {}, retry = true) {
   if (token) headers.Authorization = `Bearer ${token}`;
   if (options.body && !(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
   const response = await fetch(url, { ...options, headers });
-  if (response.status === 401 && refreshToken && retry && url !== '/api/auth/refresh') {
+  if (response.status === 401 && refreshToken && retry && !['/api/auth/refresh', '/api/auth/login', '/api/auth/2fa'].includes(url)) {
     const refreshed = await fetch('/api/auth/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -117,10 +118,15 @@ $('#authForm').addEventListener('submit', async event => {
   event.preventDefault();
   $('#authError').textContent = '';
   try {
-    const setup = event.currentTarget.dataset.mode === 'setup';
-    const result = await api(setup ? '/api/setup' : '/api/auth/login', {
+    const mode = event.currentTarget.dataset.mode;
+    const setup = mode === 'setup';
+    const secondFactor = mode === 'two-factor';
+    const result = await api(secondFactor ? '/api/auth/2fa' : setup ? '/api/setup' : '/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({
+      body: JSON.stringify(secondFactor ? {
+        challengeToken: twoFactorChallenge,
+        code: $('#twoFactorCode').value
+      } : {
         name: $('#name').value,
         email: $('#email').value,
         password: $('#password').value,
@@ -128,6 +134,11 @@ $('#authForm').addEventListener('submit', async event => {
         platform: 'web'
       })
     });
+    if (result.requiresTwoFactor) {
+      twoFactorChallenge = result.challengeToken;
+      showTwoFactorLogin();
+      return;
+    }
     token = result.token;
     refreshToken = result.refreshToken;
     user = result.user;
@@ -137,6 +148,32 @@ $('#authForm').addEventListener('submit', async event => {
   } catch (error) {
     $('#authError').textContent = error.message;
   }
+});
+
+function showTwoFactorLogin() {
+  $('#authForm').dataset.mode = 'two-factor';
+  $('#authIntro').textContent = 'Conferma l’accesso con il secondo fattore.';
+  $('#emailField').classList.add('hidden');
+  $('#passwordField').classList.add('hidden');
+  $('#twoFactorField').classList.remove('hidden');
+  $('#twoFactorCode').required = true;
+  $('#twoFactorCode').value = '';
+  $('#authSubmit').textContent = 'Verifica e accedi';
+  $('#cancelTwoFactor').classList.remove('hidden');
+  $('#twoFactorCode').focus();
+}
+
+$('#cancelTwoFactor').addEventListener('click', () => {
+  twoFactorChallenge = null;
+  $('#authForm').dataset.mode = 'login';
+  $('#authIntro').textContent = 'Accedi al tuo spazio aziendale.';
+  $('#emailField').classList.remove('hidden');
+  $('#passwordField').classList.remove('hidden');
+  $('#twoFactorField').classList.add('hidden');
+  $('#twoFactorCode').required = false;
+  $('#authSubmit').textContent = 'Accedi';
+  $('#cancelTwoFactor').classList.add('hidden');
+  $('#authError').textContent = '';
 });
 
 function showApp() {
@@ -165,6 +202,7 @@ function logout(notifyServer = true) {
 
 async function loadEntries() {
   if (view === 'people') return loadUsers();
+  if (view === 'options') return loadSecuritySettings();
   const query = new URLSearchParams();
   if (view === 'trash') query.set('trash', 'true');
   if (view === 'images') query.set('images', 'true');
@@ -518,6 +556,7 @@ function openModal(tag, title, body, submit) {
 
 function closeModal() {
   $('#modal').classList.remove('open');
+  $('#cancel').classList.remove('hidden');
 }
 
 function entryAction(entry) {
@@ -694,15 +733,113 @@ $('#newUser').addEventListener('click', () => openModal('NUOVO UTENTE', 'Crea un
   loadUsers();
 }));
 
+async function loadSecuritySettings() {
+  try {
+    const settings = await api('/api/security/2fa');
+    $('#twoFactorStatus').textContent = settings.enabled ? 'Attiva' : 'Non attiva';
+    $('#twoFactorStatus').classList.toggle('enabled', settings.enabled);
+    $('#enableTwoFactor').classList.toggle('hidden', settings.enabled);
+    $('#regenerateRecoveryCodes').classList.toggle('hidden', !settings.enabled);
+    $('#disableTwoFactor').classList.toggle('hidden', !settings.enabled);
+    $('#recoveryStatus').classList.toggle('hidden', !settings.enabled);
+    $('#recoveryStatus').textContent = settings.enabled
+      ? `${settings.recoveryCodesRemaining} codici di recupero ancora disponibili.`
+      : '';
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function showRecoveryCodes(codes) {
+  openModal('CODICI DI RECUPERO', 'Salva questi codici', `
+    <p>Conservali in un luogo sicuro. Ogni codice può essere usato una sola volta e non verrà mostrato di nuovo.</p>
+    <pre id="recoveryCodes" class="recovery-codes"></pre>
+    <button id="copyRecoveryCodes" class="copy-codes" type="button">Copia i codici</button>`, async () => {});
+  $('#recoveryCodes').textContent = codes.join('\n');
+  $('#confirm').textContent = 'Li ho salvati';
+  $('#cancel').classList.add('hidden');
+  $('#copyRecoveryCodes').onclick = async () => {
+    const value = codes.join('\n');
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+      else throw new Error('Clipboard API unavailable');
+      toast('Codici copiati');
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = value;
+      document.body.append(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      textarea.remove();
+      toast('Codici copiati');
+    }
+  };
+  $('#modalForm').onsubmit = event => {
+    event.preventDefault();
+    closeModal();
+  };
+}
+
+$('#enableTwoFactor').addEventListener('click', async () => {
+  try {
+    const setup = await api('/api/security/2fa/setup', { method: 'POST' });
+    openModal('SICUREZZA', 'Configura l’app di autenticazione', `
+      <p>Scansiona il QR con Google Authenticator, Microsoft Authenticator, 2FAS o un’app compatibile.</p>
+      <img id="totpQr" class="totp-qr" alt="Codice QR per autenticazione a due fattori">
+      <p class="manual-key">Chiave manuale: <code id="totpManualKey"></code></p>
+      <label class="field">Codice a 6 cifre<input id="totpSetupCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>`, async () => {
+      const result = await api('/api/security/2fa/enable', {
+        method: 'POST', body: JSON.stringify({ code: $('#totpSetupCode').value })
+      });
+      loadSecuritySettings();
+      setTimeout(() => showRecoveryCodes(result.recoveryCodes), 0);
+    });
+    $('#totpQr').src = setup.qrCode;
+    $('#totpManualKey').textContent = setup.manualKey;
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+$('#regenerateRecoveryCodes').addEventListener('click', () => {
+  openModal('CODICI DI RECUPERO', 'Genera nuovi codici', `
+    <p>I codici precedenti smetteranno di funzionare.</p>
+    <label class="field">Codice attuale<input id="recoveryVerifyCode" autocomplete="one-time-code" required></label>`, async () => {
+    const result = await api('/api/security/2fa/recovery-codes', {
+      method: 'POST', body: JSON.stringify({ code: $('#recoveryVerifyCode').value })
+    });
+    loadSecuritySettings();
+    setTimeout(() => showRecoveryCodes(result.recoveryCodes), 0);
+  });
+});
+
+$('#disableTwoFactor').addEventListener('click', () => {
+  openModal('SICUREZZA', 'Disattiva autenticazione a due fattori', `
+    <p>Gli altri dispositivi collegati verranno disconnessi.</p>
+    <label class="field">Password<input id="disableTwoFactorPassword" type="password" autocomplete="current-password" required></label>
+    <label class="field">Codice attuale o di recupero<input id="disableTwoFactorCode" autocomplete="one-time-code" required></label>`, async () => {
+    await api('/api/security/2fa/disable', {
+      method: 'POST', body: JSON.stringify({ password: $('#disableTwoFactorPassword').value, code: $('#disableTwoFactorCode').value })
+    });
+    toast('Autenticazione a due fattori disattivata');
+    loadSecuritySettings();
+  });
+  $('#confirm').textContent = 'Disattiva';
+  $('#confirm').classList.add('danger-confirm');
+});
+
 $$('.nav').forEach(button => button.addEventListener('click', () => {
   view = button.dataset.view;
   currentFolder = null;
   folderHistory = [];
   $$('.nav').forEach(item => item.classList.toggle('active', item === button));
   $('#people').classList.toggle('hidden', view !== 'people');
-  $('#drive').classList.toggle('hidden', view === 'people');
-  $('#newFolder').classList.toggle('hidden', view !== 'files');
-  $('#title').textContent = view === 'files' ? 'I miei file' : view === 'images' ? 'Immagini' : view === 'trash' ? 'Cestino' : 'Persone';
+  $('#options').classList.toggle('hidden', view !== 'options');
+  $('#drive').classList.toggle('hidden', view === 'people' || view === 'options');
+  $('#pageActions').classList.toggle('hidden', view === 'people' || view === 'options');
+  $('#bulkActions').classList.add('hidden');
+  $('#newFolder').classList.toggle('hidden', view !== 'files' || user.role === 'viewer');
+  $('#title').textContent = view === 'files' ? 'I miei file' : view === 'images' ? 'Immagini' : view === 'trash' ? 'Cestino' : view === 'options' ? 'Opzioni' : 'Persone';
   $('#empty').textContent = view === 'images' ? 'Non ci sono ancora immagini.' : view === 'trash' ? 'Il cestino è vuoto.' : 'Questa cartella è vuota.';
   renderBreadcrumb();
   $('#folderBack').classList.add('hidden');
