@@ -92,6 +92,9 @@ public final class MainActivity extends Activity {
     private FrameLayout drawerOverlay;
     private LinearLayout uploadHistoryContainer;
     private boolean drawerOpen;
+    private Entry clipboardEntry;
+    private boolean clipboardCut;
+    private Button pasteButton;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -183,6 +186,7 @@ public final class MainActivity extends Activity {
         back = smallButton(currentFolder == null ? "☰" : "←"); header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
         title = text("I miei file", 21); title.setTypeface(bold); title.setGravity(Gravity.CENTER_VERTICAL); title.setSingleLine(); title.setTextColor(Color.WHITE); header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
         Button add = smallButton("＋"); header.addView(add, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        pasteButton = smallButton("⎘"); pasteButton.setContentDescription("Incolla"); pasteButton.setVisibility(clipboardEntry == null ? View.GONE : View.VISIBLE); header.addView(pasteButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
         Button more = smallButton("⋮"); header.addView(more, new LinearLayout.LayoutParams(dp(48), dp(48)));
         root.addView(header);
 
@@ -206,6 +210,7 @@ public final class MainActivity extends Activity {
 
         back.setOnClickListener(v -> { if (currentFolder == null) openDrawer(); else goBack(); });
         add.setOnClickListener(v -> addMenu());
+        pasteButton.setOnClickListener(v -> pasteClipboard());
         more.setOnClickListener(v -> accountMenu());
         searchButton.setOnClickListener(v -> loadEntries());
         navFiles.setOnClickListener(v -> switchView("files")); navImages.setOnClickListener(v -> switchView("images")); navTrash.setOnClickListener(v -> switchView("trash"));
@@ -283,6 +288,8 @@ public final class MainActivity extends Activity {
                     TextView name = text(entry.name, 15); name.setTypeface(medium); name.setMaxLines(2); labels.addView(name);
                     TextView detail = text(entry.folder() ? "Cartella" : formatSize(entry.size), 13); detail.setTextColor(Color.rgb(112, 124, 143)); detail.setPadding(0, dp(3), 0, 0); labels.addView(detail);
                     row.addView(labels, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+                    Button actions = new Button(MainActivity.this); actions.setText("⋮"); actions.setTextSize(21); actions.setTextColor(Color.rgb(91, 104, 125)); actions.setMinWidth(0); actions.setMinimumWidth(0); actions.setPadding(0, 0, 0, 0); actions.setBackground(rounded(Color.TRANSPARENT, Color.TRANSPARENT, 10)); actions.setContentDescription("Azioni per " + entry.name); actions.setOnClickListener(v -> entryMenu(entry));
+                    row.addView(actions, new LinearLayout.LayoutParams(dp(42), dp(42)));
                     return row;
                 }
             });
@@ -420,10 +427,41 @@ public final class MainActivity extends Activity {
         if ("trash".equals(view)) {
             new AlertDialog.Builder(this).setTitle(entry.name).setItems(new String[]{"Ripristina", "Elimina definitivamente"}, (d, which) -> confirmTrashAction(entry, which == 0)).show();
         } else {
-            new AlertDialog.Builder(this).setTitle(entry.name).setItems(new String[]{entry.folder() ? "Apri" : "Apri / scarica", "Sposta in un’altra cartella", "Sposta nel cestino"}, (d, which) -> {
-                if (which == 0) openEntry(entry); else if (which == 1) moveDialog(entry); else confirmDelete(entry);
+            new AlertDialog.Builder(this).setTitle(entry.name).setItems(new String[]{entry.folder() ? "Apri" : "Apri / visualizza", "Rinomina", "Copia", "Taglia", "Sposta in un’altra cartella", "Sposta nel cestino"}, (d, which) -> {
+                if (which == 0) openEntry(entry);
+                else if (which == 1) renameDialog(entry);
+                else if (which == 2) setClipboard(entry, false);
+                else if (which == 3) setClipboard(entry, true);
+                else if (which == 4) moveDialog(entry);
+                else confirmDelete(entry);
             }).show();
         }
+    }
+
+    private void renameDialog(Entry entry) {
+        EditText name = input("Nuovo nome", InputType.TYPE_CLASS_TEXT); name.setText(entry.name); name.setSelection(name.length());
+        new AlertDialog.Builder(this).setTitle("Rinomina").setView(name).setNegativeButton("Annulla", null).setPositiveButton("Salva", (dialog, which) -> {
+            busy("Rinomina…"); async(() -> { api.rename(entry.id, name.getText().toString()); return true; }, ok -> { stopBusy(); toast("Elemento rinominato"); loadEntries(); });
+        }).show();
+    }
+
+    private void setClipboard(Entry entry, boolean cut) {
+        clipboardEntry = entry; clipboardCut = cut;
+        if (pasteButton != null) pasteButton.setVisibility(View.VISIBLE);
+        toast(cut ? "Elemento tagliato: apri la destinazione e premi Incolla" : "Elemento copiato: apri la destinazione e premi Incolla");
+    }
+
+    private void pasteClipboard() {
+        if (clipboardEntry == null) return;
+        if (!"files".equals(view)) { toast("Apri una cartella in I miei file per incollare"); return; }
+        String parentId = currentFolder == null ? null : currentFolder.id;
+        Entry source = clipboardEntry; boolean cut = clipboardCut;
+        busy(cut ? "Spostamento…" : "Copia…");
+        async(() -> { if (cut) api.move(source.id, parentId); else api.copy(source.id, parentId); return true; }, ok -> {
+            stopBusy();
+            if (cut) { clipboardEntry = null; clipboardCut = false; pasteButton.setVisibility(View.GONE); }
+            toast(cut ? "Elemento spostato" : "Copia creata"); loadEntries();
+        });
     }
 
     private void moveDialog(Entry entry) {
