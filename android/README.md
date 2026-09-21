@@ -15,7 +15,7 @@ Client Android nativo per Arca Drive, compatibile con Android 8.0 (API 26) e ver
 - spostamento di file e cartelle;
 - ripristino ed eliminazione definitiva dal cestino.
 
-Per un server pubblico usa un URL HTTPS valido. L'accesso HTTP è mantenuto soltanto per test su rete locale.
+Il client accetta esclusivamente un URL HTTPS con certificato valido, così password, token e documenti non transitano in chiaro.
 
 ## Build locale
 
