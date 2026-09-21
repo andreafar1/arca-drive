@@ -3,6 +3,8 @@ import pg from 'pg';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
+import * as OTPAuth from 'otpauth';
+import QRCode from 'qrcode';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -18,6 +20,7 @@ const ACCESS_TOKEN_MINUTES = Number(process.env.ACCESS_TOKEN_MINUTES || 15);
 const REFRESH_TOKEN_DAYS = Number(process.env.REFRESH_TOKEN_DAYS || 30);
 const JWT_SECRET = process.env.JWT_SECRET;
 const DATABASE_URL = process.env.DATABASE_URL;
+const TOTP_KEY = crypto.createHash('sha256').update(process.env.TOTP_ENCRYPTION_KEY || `arca-drive-totp:${JWT_SECRET}`).digest();
 const COLLABORA_INTERNAL_URL = String(process.env.COLLABORA_INTERNAL_URL || 'http://collabora:9980').replace(/\/$/, '');
 const WOPI_INTERNAL_URL = String(process.env.WOPI_INTERNAL_URL || 'http://app:3000').replace(/\/$/, '');
 const OFFICE_EXTENSIONS = new Set(['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp']);
@@ -51,6 +54,7 @@ const expiredUploads = await pool.query("DELETE FROM upload_sessions WHERE expir
 await Promise.all(expiredUploads.rows.map(row => fs.unlink(path.join(STORAGE_DIR, row.storage_name)).catch(() => {})));
 await pool.query("DELETE FROM device_sessions WHERE expires_at<=now() OR revoked_at<now()-interval '30 days'");
 await pool.query('DELETE FROM wopi_locks WHERE expires_at<=now()');
+await pool.query("DELETE FROM two_factor_challenges WHERE expires_at<=now() OR used_at<now()-interval '1 day'");
 await pool.query(
   `UPDATE entries candidate SET is_system=true
    WHERE candidate.id IN (
@@ -98,6 +102,72 @@ function accessTokenFor(user, sessionId) {
 
 function hashToken(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function encryptTotpSecret(secret) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', TOTP_KEY, iv);
+  const ciphertext = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
+  return `${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${ciphertext.toString('base64url')}`;
+}
+
+function decryptTotpSecret(value) {
+  const [iv, tag, ciphertext] = String(value || '').split('.');
+  if (!iv || !tag || !ciphertext) throw new Error('Configurazione 2FA non valida');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', TOTP_KEY, Buffer.from(iv, 'base64url'));
+  decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+  return Buffer.concat([decipher.update(Buffer.from(ciphertext, 'base64url')), decipher.final()]).toString('utf8');
+}
+
+function totpFor(user, secret) {
+  return new OTPAuth.TOTP({
+    issuer: 'Arca Drive',
+    label: user.email,
+    algorithm: 'SHA1',
+    digits: 6,
+    period: 30,
+    secret: OTPAuth.Secret.fromBase32(secret)
+  });
+}
+
+function normalizeSecondFactorCode(value) {
+  return String(value || '').trim().toUpperCase().replace(/[\s-]/g, '');
+}
+
+function recoveryCodeHash(value) {
+  return crypto.createHmac('sha256', JWT_SECRET).update(normalizeSecondFactorCode(value)).digest('hex');
+}
+
+async function verifySecondFactor(user, value, db = pool) {
+  const normalized = normalizeSecondFactorCode(value);
+  if (/^\d{6}$/.test(normalized) && user.totp_secret_encrypted) {
+    const secret = decryptTotpSecret(user.totp_secret_encrypted);
+    if (totpFor(user, secret).validate({ token: normalized, window: 1 }) !== null) return true;
+  }
+  if (!/^[A-F0-9]{10}$/.test(normalized)) return false;
+  const result = await db.query(
+    `UPDATE two_factor_recovery_codes SET used_at=now()
+     WHERE id=(SELECT id FROM two_factor_recovery_codes WHERE user_id=$1 AND code_hash=$2 AND used_at IS NULL LIMIT 1)
+     RETURNING id`,
+    [user.id, recoveryCodeHash(normalized)]
+  );
+  return result.rowCount > 0;
+}
+
+function generateRecoveryCodes() {
+  return Array.from({ length: 10 }, () => {
+    const raw = crypto.randomBytes(5).toString('hex').toUpperCase();
+    return `${raw.slice(0, 5)}-${raw.slice(5)}`;
+  });
+}
+
+async function replaceRecoveryCodes(userId, db = pool) {
+  const codes = generateRecoveryCodes();
+  await db.query('DELETE FROM two_factor_recovery_codes WHERE user_id=$1', [userId]);
+  for (const code of codes) {
+    await db.query('INSERT INTO two_factor_recovery_codes(user_id,code_hash) VALUES($1,$2)', [userId, recoveryCodeHash(code)]);
+  }
+  return codes;
 }
 
 async function createSession(user, req, device = {}) {
@@ -294,7 +364,69 @@ app.post('/api/auth/login', async (req, res) => {
     return res.status(401).json({ error: 'Email o password non corretti' });
   }
   const safe = { id: user.id, email: user.email, name: user.name, role: user.role };
+  if (user.totp_enabled) {
+    const device = {
+      deviceName: String(req.body.deviceName || 'Browser web').slice(0, 255),
+      platform: String(req.body.platform || 'web').slice(0, 40)
+    };
+    const { rows: challengeRows } = await pool.query(
+      `INSERT INTO two_factor_challenges(user_id,device,expires_at)
+       VALUES($1,$2::jsonb,now()+interval '5 minutes') RETURNING id,expires_at`,
+      [user.id, JSON.stringify(device)]
+    );
+    const challengeToken = jwt.sign(
+      { typ: '2fa_login', sub: user.id, cid: challengeRows[0].id },
+      JWT_SECRET,
+      { expiresIn: '5m' }
+    );
+    return res.status(202).json({ requiresTwoFactor: true, challengeToken, expiresIn: 300 });
+  }
   res.json(await createSession(safe, req, req.body));
+});
+
+app.post('/api/auth/2fa', async (req, res) => {
+  let payload;
+  try {
+    payload = jwt.verify(String(req.body.challengeToken || ''), JWT_SECRET);
+    if (payload.typ !== '2fa_login') throw new Error('Tipo token non valido');
+  } catch {
+    return res.status(401).json({ error: 'Verifica scaduta: accedi nuovamente' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT c.*,u.email,u.name,u.role,u.totp_enabled,u.totp_secret_encrypted
+       FROM two_factor_challenges c JOIN users u ON u.id=c.user_id
+       WHERE c.id=$1 AND c.user_id=$2 FOR UPDATE`,
+      [payload.cid, payload.sub]
+    );
+    const challenge = rows[0];
+    if (!challenge || challenge.used_at || new Date(challenge.expires_at) <= new Date() || challenge.attempts >= 5 || !challenge.totp_enabled) {
+      await client.query('ROLLBACK');
+      return res.status(401).json({ error: 'Verifica scaduta: accedi nuovamente' });
+    }
+    await client.query('UPDATE two_factor_challenges SET attempts=attempts+1 WHERE id=$1', [challenge.id]);
+    const valid = await verifySecondFactor({
+      id: challenge.user_id,
+      email: challenge.email,
+      totp_secret_encrypted: challenge.totp_secret_encrypted
+    }, req.body.code, client);
+    if (!valid) {
+      await client.query('COMMIT');
+      return res.status(401).json({ error: 'Codice di verifica non valido' });
+    }
+    await client.query('UPDATE two_factor_challenges SET used_at=now() WHERE id=$1', [challenge.id]);
+    await client.query('COMMIT');
+    const safe = { id: challenge.user_id, email: challenge.email, name: challenge.name, role: challenge.role };
+    res.json(await createSession(safe, req, challenge.device));
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 });
 
 app.post('/api/auth/refresh', async (req, res) => {
@@ -341,6 +473,120 @@ app.post('/api/auth/logout', auth, async (req, res) => {
 app.get('/api/me', auth, async (req, res) => {
   const { rows } = await pool.query('SELECT id,email,name,role,created_at FROM users WHERE id=$1', [req.user.sub]);
   res.json(rows[0]);
+});
+
+app.get('/api/security/2fa', auth, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT u.totp_enabled,
+       COUNT(rc.id) FILTER (WHERE rc.used_at IS NULL)::int AS recovery_codes_remaining
+     FROM users u LEFT JOIN two_factor_recovery_codes rc ON rc.user_id=u.id
+     WHERE u.id=$1 GROUP BY u.id`,
+    [req.user.sub]
+  );
+  res.set('Cache-Control', 'no-store').json({
+    enabled: Boolean(rows[0]?.totp_enabled),
+    recoveryCodesRemaining: rows[0]?.recovery_codes_remaining || 0
+  });
+});
+
+app.post('/api/security/2fa/setup', auth, async (req, res) => {
+  const { rows } = await pool.query('SELECT id,email,name,totp_enabled FROM users WHERE id=$1', [req.user.sub]);
+  const account = rows[0];
+  if (!account) return res.status(404).json({ error: 'Utente non trovato' });
+  if (account.totp_enabled) return res.status(409).json({ error: 'Autenticazione a due fattori già attiva' });
+  const secret = new OTPAuth.Secret({ size: 20 }).base32;
+  await pool.query('UPDATE users SET totp_secret_encrypted=$1 WHERE id=$2', [encryptTotpSecret(secret), account.id]);
+  const uri = totpFor(account, secret).toString();
+  const qrCode = await QRCode.toDataURL(uri, { width: 240, margin: 1, errorCorrectionLevel: 'M' });
+  res.set('Cache-Control', 'no-store').json({ qrCode, manualKey: secret });
+});
+
+app.post('/api/security/2fa/enable', auth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      'SELECT id,email,totp_enabled,totp_secret_encrypted FROM users WHERE id=$1 FOR UPDATE',
+      [req.user.sub]
+    );
+    const account = rows[0];
+    if (!account?.totp_secret_encrypted) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Avvia prima la configurazione' });
+    }
+    if (account.totp_enabled) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Autenticazione a due fattori già attiva' });
+    }
+    const code = normalizeSecondFactorCode(req.body.code);
+    const valid = /^\d{6}$/.test(code) && totpFor(account, decryptTotpSecret(account.totp_secret_encrypted)).validate({ token: code, window: 1 }) !== null;
+    if (!valid) {
+      await client.query('ROLLBACK');
+      return res.status(401).json({ error: 'Codice di verifica non valido' });
+    }
+    await client.query('UPDATE users SET totp_enabled=true WHERE id=$1', [account.id]);
+    const recoveryCodes = await replaceRecoveryCodes(account.id, client);
+    await client.query('UPDATE device_sessions SET revoked_at=now() WHERE user_id=$1 AND id<>$2 AND revoked_at IS NULL', [account.id, req.user.sid]);
+    await client.query('COMMIT');
+    res.set('Cache-Control', 'no-store').json({ recoveryCodes });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/security/2fa/recovery-codes', auth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      'SELECT id,email,totp_enabled,totp_secret_encrypted FROM users WHERE id=$1 FOR UPDATE',
+      [req.user.sub]
+    );
+    const account = rows[0];
+    if (!account?.totp_enabled) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Autenticazione a due fattori non attiva' });
+    }
+    if (!(await verifySecondFactor(account, req.body.code, client))) {
+      await client.query('ROLLBACK');
+      return res.status(401).json({ error: 'Codice di verifica non valido' });
+    }
+    const recoveryCodes = await replaceRecoveryCodes(account.id, client);
+    await client.query('COMMIT');
+    res.set('Cache-Control', 'no-store').json({ recoveryCodes });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/security/2fa/disable', auth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('SELECT * FROM users WHERE id=$1 FOR UPDATE', [req.user.sub]);
+    const account = rows[0];
+    const passwordValid = account && await bcrypt.compare(String(req.body.password || ''), account.password_hash);
+    if (!passwordValid || !account.totp_enabled || !(await verifySecondFactor(account, req.body.code, client))) {
+      await client.query('ROLLBACK');
+      return res.status(401).json({ error: 'Password o codice di verifica non validi' });
+    }
+    await client.query('UPDATE users SET totp_enabled=false,totp_secret_encrypted=NULL WHERE id=$1', [account.id]);
+    await client.query('DELETE FROM two_factor_recovery_codes WHERE user_id=$1', [account.id]);
+    await client.query('UPDATE device_sessions SET revoked_at=now() WHERE user_id=$1 AND id<>$2 AND revoked_at IS NULL', [account.id, req.user.sid]);
+    await client.query('COMMIT');
+    res.status(204).end();
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 });
 
 app.get('/api/devices', auth, async (req, res) => {
