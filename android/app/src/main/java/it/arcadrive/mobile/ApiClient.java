@@ -12,6 +12,7 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -27,10 +28,12 @@ final class ApiClient {
     }
 
     private final SecureStore store;
+    private final boolean allowLocalHttp;
     private String baseUrl;
 
-    ApiClient(SecureStore store, String baseUrl) {
+    ApiClient(SecureStore store, String baseUrl, boolean allowLocalHttp) {
         this.store = store;
+        this.allowLocalHttp = allowLocalHttp;
         setBaseUrl(baseUrl);
     }
 
@@ -148,7 +151,7 @@ final class ApiClient {
     }
 
     private HttpURLConnection open(String method, String path, boolean auth) throws Exception {
-        if (!baseUrl.startsWith("https://")) throw new Exception("Il server deve utilizzare HTTPS");
+        if (!isAllowedServer(baseUrl)) throw new Exception("Usa HTTPS oppure un indirizzo HTTP della rete locale");
         HttpURLConnection connection = (HttpURLConnection) new URL(baseUrl + path).openConnection();
         connection.setRequestMethod(method);
         connection.setConnectTimeout(15000);
@@ -185,5 +188,18 @@ final class ApiClient {
         write(out, "--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + name + "\"\r\n\r\n" + value + "\r\n");
     }
     private static String enc(String value) throws Exception { return URLEncoder.encode(value, StandardCharsets.UTF_8.name()); }
+    static boolean isLocalHttp(String value) {
+        try {
+            URI uri = URI.create(value);
+            if (!"http".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) return false;
+            String host = uri.getHost().toLowerCase();
+            if (host.equals("localhost") || host.endsWith(".local")) return true;
+            String[] parts = host.split("\\.");
+            if (parts.length != 4) return false;
+            int a = Integer.parseInt(parts[0]); int b = Integer.parseInt(parts[1]);
+            return a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) || a == 127;
+        } catch (Exception ignored) { return false; }
+    }
+    private boolean isAllowedServer(String value) { return value.startsWith("https://") || (allowLocalHttp && isLocalHttp(value)); }
     interface Progress { void sent(long bytes); }
 }
