@@ -110,3 +110,7 @@ Le API per Android sono documentate in [docs/mobile-api.md](docs/mobile-api.md).
 TRUST_PROXY=true
 REQUIRE_HTTPS=true
 ```
+
+Il client Android nativo si trova nella cartella [`android`](android). Supporta configurazione del server, login con 2FA, navigazione, ricerca, creazione di cartelle, upload, apertura dei file e gestione del cestino. I token vengono cifrati con Android Keystore.
+
+Ogni modifica alla cartella Android genera un APK di prova nel workflow GitHub Actions **Android APK**. L'artefatto `arca-drive-android-debug` è installabile manualmente per i test. Per la distribuzione pubblica occorre creare una chiave di firma release e conservarla fuori dal repository.
