@@ -6,6 +6,7 @@ Arca Drive è un file manager aziendale self-hosted per Ubuntu, distribuito con 
 
 - configurazione del primo amministratore;
 - accesso tramite email e password;
+- autenticazione a due fattori TOTP con codici di recupero;
 - creazione di utenti con ruoli amministratore, collaboratore o visualizzatore;
 - upload e download persistenti;
 - cartelle, ricerca, cestino e ripristino;
@@ -33,14 +34,15 @@ cd arca-drive
 cp .env.example .env
 ```
 
-Genera due valori casuali:
+Genera tre valori casuali:
 
 ```bash
 openssl rand -base64 36
 openssl rand -base64 48
+openssl rand -base64 32
 ```
 
-Inserisci il primo come `POSTGRES_PASSWORD` e il secondo come `JWT_SECRET` nel file `.env`:
+Inserisci i valori rispettivamente come `POSTGRES_PASSWORD`, `JWT_SECRET` e `TOTP_ENCRYPTION_KEY` nel file `.env`:
 
 ```bash
 nano .env
@@ -93,6 +95,7 @@ Il ripristino deve includere sia PostgreSQL sia il volume `file_data`. I soli me
 ## Sicurezza
 
 - non pubblicare il file `.env`;
+- conserva `JWT_SECRET` e `TOTP_ENCRYPTION_KEY`: cambiandoli, le sessioni o le configurazioni 2FA esistenti non saranno più utilizzabili;
 - usa HTTPS tramite un reverse proxy;
 - non esporre la porta PostgreSQL;
 - aggiorna regolarmente immagini e sistema operativo;
