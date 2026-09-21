@@ -6,8 +6,13 @@ CREATE TABLE IF NOT EXISTS users (
   name text NOT NULL,
   password_hash text NOT NULL,
   role text NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member', 'viewer')),
+  totp_secret_encrypted text,
+  totp_enabled boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret_encrypted text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled boolean NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS entries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -62,6 +67,28 @@ CREATE TABLE IF NOT EXISTS device_sessions (
 
 CREATE INDEX IF NOT EXISTS device_sessions_user_idx ON device_sessions(user_id);
 CREATE INDEX IF NOT EXISTS device_sessions_expiry_idx ON device_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS two_factor_challenges (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  device jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  used_at timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS two_factor_challenges_expiry_idx ON two_factor_challenges(expires_at);
+
+CREATE TABLE IF NOT EXISTS two_factor_recovery_codes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  used_at timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS two_factor_recovery_user_idx ON two_factor_recovery_codes(user_id,used_at);
 
 CREATE TABLE IF NOT EXISTS changes (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
