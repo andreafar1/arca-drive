@@ -69,12 +69,12 @@ public final class MainActivity extends Activity {
         intro.setPadding(0, dp(12), 0, dp(20)); page.addView(intro);
         EditText url = input("https://drive.azienda.it", InputType.TYPE_TEXT_VARIATION_URI);
         url.setText(server); page.addView(url, matchWrap());
-        TextView warning = text("Per l’accesso via Internet usa esclusivamente HTTPS. HTTP è disponibile solo per reti locali affidabili.", 13);
+        TextView warning = text("Il client accetta esclusivamente server HTTPS con un certificato valido.", 13);
         warning.setTextColor(Color.rgb(170, 75, 30)); warning.setPadding(0, dp(10), 0, dp(16)); page.addView(warning);
         Button connect = primary("Continua"); page.addView(connect, matchWrap());
         connect.setOnClickListener(v -> {
             String candidate = url.getText().toString().trim().replaceAll("/+$", "");
-            if (!candidate.matches("https?://.+")) { toast("Inserisci un indirizzo http:// o https:// valido"); return; }
+            if (!candidate.matches("https://.+")) { toast("Inserisci un indirizzo https:// valido"); return; }
             server = candidate;
             getPreferences(MODE_PRIVATE).edit().putString("server", server).apply();
             api.setBaseUrl(server);
