@@ -25,7 +25,6 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
-import androidx.core.content.res.ResourcesCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -46,8 +45,9 @@ public final class MainActivity extends Activity {
     private static final int MINT = Color.rgb(49, 199, 163);
     private static final int PAGE = Color.rgb(246, 248, 251);
     private static final int LINE = Color.rgb(224, 229, 237);
-    private Typeface regular = Typeface.create("sans-serif", Typeface.NORMAL);
-    private Typeface medium = Typeface.create("sans-serif-medium", Typeface.NORMAL);
+    private final Typeface regular = Typeface.create("sans-serif", Typeface.NORMAL);
+    private final Typeface medium = Typeface.create("sans-serif-medium", Typeface.NORMAL);
+    private final Typeface bold = Typeface.create("sans-serif", Typeface.BOLD);
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Deque<Entry> folderStack = new ArrayDeque<>();
     private SecureStore secure;
@@ -64,11 +64,6 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        Typeface inter = ResourcesCompat.getFont(this, R.font.inter);
-        if (inter != null) {
-            regular = Typeface.create(inter, Typeface.NORMAL);
-            medium = Typeface.create(inter, Typeface.BOLD);
-        }
         secure = new SecureStore(this);
         server = getPreferences(MODE_PRIVATE).getString("server", "");
         api = new ApiClient(secure, server, BuildConfig.ALLOW_LOCAL_HTTP);
@@ -154,7 +149,7 @@ public final class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(PAGE);
         LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(12), dp(10), dp(12), dp(10)); header.setBackgroundColor(NAVY);
         back = smallButton("←"); back.setVisibility(View.GONE); header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
-        title = text("I miei file", 21); title.setTypeface(medium); title.setGravity(Gravity.CENTER_VERTICAL); title.setSingleLine(); title.setTextColor(Color.WHITE); header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
+        title = text("I miei file", 21); title.setTypeface(bold); title.setGravity(Gravity.CENTER_VERTICAL); title.setSingleLine(); title.setTextColor(Color.WHITE); header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
         Button add = smallButton("＋"); header.addView(add, new LinearLayout.LayoutParams(dp(48), dp(48)));
         Button more = smallButton("⋮"); header.addView(more, new LinearLayout.LayoutParams(dp(48), dp(48)));
         root.addView(header);
@@ -196,7 +191,7 @@ public final class MainActivity extends Activity {
                     Entry entry = getItem(position);
                     LinearLayout row = new LinearLayout(MainActivity.this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(16), dp(13), dp(16), dp(13));
                     row.setBackground(new InsetDrawable(rounded(Color.WHITE, LINE, 13), 0, dp(4), 0, dp(4)));
-                    TextView badge = text(entry.folder() ? "DIR" : icon(entry), 10); badge.setTypeface(medium); badge.setGravity(Gravity.CENTER); badge.setTextColor(entry.folder() ? Color.rgb(82, 100, 130) : entry.mime.startsWith("image/") ? Color.rgb(14, 116, 95) : entry.mime.contains("pdf") ? Color.rgb(190, 55, 70) : Color.rgb(45, 83, 150));
+                    TextView badge = text(entry.folder() ? "DIR" : icon(entry), 10); badge.setTypeface(bold); badge.setGravity(Gravity.CENTER); badge.setTextColor(entry.folder() ? Color.rgb(82, 100, 130) : entry.mime.startsWith("image/") ? Color.rgb(14, 116, 95) : entry.mime.contains("pdf") ? Color.rgb(190, 55, 70) : Color.rgb(45, 83, 150));
                     badge.setBackground(rounded(entry.folder() ? Color.rgb(234, 238, 245) : entry.mime.startsWith("image/") ? Color.rgb(220, 247, 238) : entry.mime.contains("pdf") ? Color.rgb(255, 231, 234) : Color.rgb(229, 238, 255), Color.TRANSPARENT, 9));
                     row.addView(badge, new LinearLayout.LayoutParams(dp(48), dp(40)));
                     LinearLayout labels = new LinearLayout(MainActivity.this); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(13), 0, 0, 0);
@@ -344,10 +339,10 @@ public final class MainActivity extends Activity {
     private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
 
     private LinearLayout page() { LinearLayout page = new LinearLayout(this); page.setOrientation(LinearLayout.VERTICAL); page.setPadding(dp(28), dp(54), dp(28), dp(24)); page.setBackgroundColor(Color.WHITE); return page; }
-    private TextView brand(String subtitle) { TextView text = text("A  Arca Drive\n" + subtitle, 25); text.setTextColor(NAVY); text.setTypeface(medium); return text; }
+    private TextView brand(String subtitle) { TextView text = text("A  Arca Drive\n" + subtitle, 25); text.setTextColor(NAVY); text.setTypeface(bold); return text; }
     private TextView text(String value, int size) { TextView text = new TextView(this); text.setText(value); text.setTextSize(size); text.setTypeface(regular); text.setTextColor(NAVY); return text; }
     private EditText input(String hint, int type) { EditText input = new EditText(this); input.setHint(hint); input.setTextSize(16); input.setTypeface(regular); input.setInputType(type); input.setSingleLine(); input.setPadding(dp(14), 0, dp(14), 0); input.setBackground(rounded(Color.rgb(248, 250, 252), LINE, 12)); return input; }
-    private Button primary(String label) { Button b = new Button(this); b.setText(label); b.setAllCaps(false); b.setTextSize(15); b.setTypeface(medium); b.setTextColor(NAVY); b.setBackground(rounded(MINT, Color.TRANSPARENT, 12)); return b; }
+    private Button primary(String label) { Button b = new Button(this); b.setText(label); b.setAllCaps(false); b.setTextSize(15); b.setTypeface(bold); b.setTextColor(NAVY); b.setBackground(rounded(MINT, Color.TRANSPARENT, 12)); return b; }
     private Button secondary(String label) { Button b = new Button(this); b.setText(label); b.setAllCaps(false); b.setTextSize(14); b.setTypeface(medium); b.setTextColor(NAVY); b.setBackground(rounded(Color.rgb(235, 239, 244), Color.TRANSPARENT, 12)); return b; }
     private Button smallButton(String label) { Button b = new Button(this); b.setText(label); b.setAllCaps(false); b.setTextSize(23); b.setTypeface(regular); b.setTextColor(Color.WHITE); b.setMinWidth(0); b.setMinimumWidth(0); b.setPadding(0, 0, 0, 0); b.setBackground(rounded(Color.TRANSPARENT, Color.TRANSPARENT, 12)); return b; }
     private Button navButton(String label) { Button b = secondary(label); b.setTextSize(13); b.setBackground(rounded(Color.rgb(242, 245, 249), Color.TRANSPARENT, 12)); return b; }
