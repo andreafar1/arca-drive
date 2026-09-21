@@ -7,6 +7,8 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.InsetDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
@@ -23,6 +25,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import org.json.JSONObject;
 
@@ -38,6 +43,10 @@ public final class MainActivity extends Activity {
     private static final int PICK_FILE = 40;
     private static final int NAVY = Color.rgb(16, 26, 48);
     private static final int MINT = Color.rgb(49, 199, 163);
+    private static final int PAGE = Color.rgb(246, 248, 251);
+    private static final int LINE = Color.rgb(224, 229, 237);
+    private static final Typeface REGULAR = Typeface.create("sans-serif", Typeface.NORMAL);
+    private static final Typeface MEDIUM = Typeface.create("sans-serif-medium", Typeface.NORMAL);
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Deque<Entry> folderStack = new ArrayDeque<>();
     private SecureStore secure;
@@ -136,23 +145,30 @@ public final class MainActivity extends Activity {
     }
 
     private void showDrive() {
-        LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Color.rgb(246, 248, 251));
+        LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(PAGE);
         LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(12), dp(10), dp(12), dp(10)); header.setBackgroundColor(NAVY);
         back = smallButton("←"); back.setVisibility(View.GONE); header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
-        title = text("I miei file", 21); title.setTypeface(Typeface.DEFAULT, Typeface.BOLD); title.setTextColor(Color.WHITE); header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
+        title = text("I miei file", 21); title.setTypeface(MEDIUM); title.setGravity(Gravity.CENTER_VERTICAL); title.setSingleLine(); title.setTextColor(Color.WHITE); header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
         Button add = smallButton("＋"); header.addView(add, new LinearLayout.LayoutParams(dp(48), dp(48)));
         Button more = smallButton("⋮"); header.addView(more, new LinearLayout.LayoutParams(dp(48), dp(48)));
         root.addView(header);
 
         search = input("Cerca file e cartelle", InputType.TYPE_CLASS_TEXT); search.setSingleLine();
-        LinearLayout searchRow = new LinearLayout(this); searchRow.setPadding(dp(12), dp(10), dp(12), 0); searchRow.addView(search, new LinearLayout.LayoutParams(0, dp(50), 1));
-        Button searchButton = secondary("Cerca"); searchRow.addView(searchButton, new LinearLayout.LayoutParams(dp(90), dp(50))); root.addView(searchRow);
+        search.setBackground(rounded(Color.WHITE, LINE, 12));
+        LinearLayout searchRow = new LinearLayout(this); searchRow.setGravity(Gravity.CENTER_VERTICAL); searchRow.setPadding(dp(14), dp(14), dp(14), dp(8)); searchRow.addView(search, new LinearLayout.LayoutParams(0, dp(52), 1));
+        Button searchButton = secondary("Cerca"); LinearLayout.LayoutParams searchButtonParams = new LinearLayout.LayoutParams(dp(92), dp(52)); searchButtonParams.leftMargin = dp(8); searchRow.addView(searchButton, searchButtonParams); root.addView(searchRow);
 
-        list = new ListView(this); list.setDividerHeight(1); root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-        LinearLayout nav = new LinearLayout(this); nav.setGravity(Gravity.CENTER); nav.setPadding(dp(6), dp(6), dp(6), dp(6)); nav.setBackgroundColor(Color.WHITE);
+        list = new ListView(this); list.setDividerHeight(0); list.setPadding(dp(8), dp(4), dp(8), dp(6)); list.setClipToPadding(false); list.setBackgroundColor(PAGE); root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        LinearLayout nav = new LinearLayout(this); nav.setGravity(Gravity.CENTER); nav.setPadding(dp(10), dp(8), dp(10), dp(8)); nav.setBackgroundColor(Color.WHITE);
         Button files = navButton("File"); Button images = navButton("Immagini"); Button trash = navButton("Cestino");
         nav.addView(files, weighted()); nav.addView(images, weighted()); nav.addView(trash, weighted()); root.addView(nav);
         setContentView(root);
+        ViewCompat.setOnApplyWindowInsetsListener(root, (view, windowInsets) -> {
+            Insets bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars());
+            header.setPadding(dp(12), bars.top + dp(8), dp(12), dp(8));
+            nav.setPadding(dp(10), dp(8), dp(10), bars.bottom + dp(8));
+            return windowInsets;
+        });
 
         back.setOnClickListener(v -> goBack());
         add.setOnClickListener(v -> addMenu());
@@ -171,12 +187,16 @@ public final class MainActivity extends Activity {
             stopBusy(); currentEntries = entries;
             list.setAdapter(new ArrayAdapter<Entry>(this, android.R.layout.simple_list_item_2, android.R.id.text1, entries) {
                 @Override public View getView(int position, View convert, ViewGroup parent) {
-                    View row = super.getView(position, convert, parent);
                     Entry entry = getItem(position);
-                    ((TextView) row.findViewById(android.R.id.text1)).setText((entry.folder() ? "▰  " : icon(entry) + "  ") + entry.name);
-                    TextView detail = row.findViewById(android.R.id.text2);
-                    detail.setText(entry.folder() ? "Cartella" : formatSize(entry.size));
-                    row.setPadding(dp(8), dp(7), dp(8), dp(7));
+                    LinearLayout row = new LinearLayout(MainActivity.this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(16), dp(13), dp(16), dp(13));
+                    row.setBackground(new InsetDrawable(rounded(Color.WHITE, LINE, 13), 0, dp(4), 0, dp(4)));
+                    TextView badge = text(entry.folder() ? "DIR" : icon(entry), 11); badge.setTypeface(MEDIUM); badge.setGravity(Gravity.CENTER); badge.setTextColor(entry.folder() ? Color.rgb(82, 100, 130) : entry.mime.startsWith("image/") ? Color.rgb(14, 116, 95) : entry.mime.contains("pdf") ? Color.rgb(190, 55, 70) : Color.rgb(45, 83, 150));
+                    badge.setBackground(rounded(entry.folder() ? Color.rgb(234, 238, 245) : entry.mime.startsWith("image/") ? Color.rgb(220, 247, 238) : entry.mime.contains("pdf") ? Color.rgb(255, 231, 234) : Color.rgb(229, 238, 255), Color.TRANSPARENT, 9));
+                    row.addView(badge, new LinearLayout.LayoutParams(dp(48), dp(40)));
+                    LinearLayout labels = new LinearLayout(MainActivity.this); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(13), 0, 0, 0);
+                    TextView name = text(entry.name, 16); name.setTypeface(MEDIUM); name.setMaxLines(2); labels.addView(name);
+                    TextView detail = text(entry.folder() ? "Cartella" : formatSize(entry.size), 13); detail.setTextColor(Color.rgb(112, 124, 143)); detail.setPadding(0, dp(3), 0, 0); labels.addView(detail);
+                    row.addView(labels, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
                     return row;
                 }
             });
@@ -318,17 +338,18 @@ public final class MainActivity extends Activity {
     private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
 
     private LinearLayout page() { LinearLayout page = new LinearLayout(this); page.setOrientation(LinearLayout.VERTICAL); page.setPadding(dp(28), dp(54), dp(28), dp(24)); page.setBackgroundColor(Color.WHITE); return page; }
-    private TextView brand(String subtitle) { TextView text = text("A  Arca Drive\n" + subtitle, 25); text.setTextColor(NAVY); text.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return text; }
-    private TextView text(String value, int size) { TextView text = new TextView(this); text.setText(value); text.setTextSize(size); text.setTextColor(NAVY); return text; }
-    private EditText input(String hint, int type) { EditText input = new EditText(this); input.setHint(hint); input.setInputType(type); input.setSingleLine(); input.setPadding(dp(12), 0, dp(12), 0); return input; }
-    private Button primary(String label) { Button b = new Button(this); b.setText(label); b.setTextColor(NAVY); b.setBackgroundColor(MINT); return b; }
-    private Button secondary(String label) { Button b = new Button(this); b.setText(label); b.setTextColor(NAVY); b.setBackgroundColor(Color.rgb(235, 239, 244)); return b; }
-    private Button smallButton(String label) { Button b = new Button(this); b.setText(label); b.setTextSize(22); b.setTextColor(Color.WHITE); b.setBackgroundColor(Color.TRANSPARENT); return b; }
-    private Button navButton(String label) { Button b = secondary(label); b.setTextSize(12); return b; }
+    private TextView brand(String subtitle) { TextView text = text("A  Arca Drive\n" + subtitle, 25); text.setTextColor(NAVY); text.setTypeface(MEDIUM); return text; }
+    private TextView text(String value, int size) { TextView text = new TextView(this); text.setText(value); text.setTextSize(size); text.setTypeface(REGULAR); text.setTextColor(NAVY); return text; }
+    private EditText input(String hint, int type) { EditText input = new EditText(this); input.setHint(hint); input.setTextSize(16); input.setTypeface(REGULAR); input.setInputType(type); input.setSingleLine(); input.setPadding(dp(14), 0, dp(14), 0); input.setBackground(rounded(Color.rgb(248, 250, 252), LINE, 12)); return input; }
+    private Button primary(String label) { Button b = new Button(this); b.setText(label); b.setAllCaps(false); b.setTextSize(15); b.setTypeface(MEDIUM); b.setTextColor(NAVY); b.setBackground(rounded(MINT, Color.TRANSPARENT, 12)); return b; }
+    private Button secondary(String label) { Button b = new Button(this); b.setText(label); b.setAllCaps(false); b.setTextSize(14); b.setTypeface(MEDIUM); b.setTextColor(NAVY); b.setBackground(rounded(Color.rgb(235, 239, 244), Color.TRANSPARENT, 12)); return b; }
+    private Button smallButton(String label) { Button b = new Button(this); b.setText(label); b.setAllCaps(false); b.setTextSize(23); b.setTypeface(REGULAR); b.setTextColor(Color.WHITE); b.setMinWidth(0); b.setMinimumWidth(0); b.setPadding(0, 0, 0, 0); b.setBackground(rounded(Color.TRANSPARENT, Color.TRANSPARENT, 12)); return b; }
+    private Button navButton(String label) { Button b = secondary(label); b.setTextSize(13); b.setBackground(rounded(Color.rgb(242, 245, 249), Color.TRANSPARENT, 12)); return b; }
     private LinearLayout.LayoutParams matchWrap() { return new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)); }
     private LinearLayout.LayoutParams spaced() { LinearLayout.LayoutParams p = matchWrap(); p.topMargin = dp(12); return p; }
     private LinearLayout.LayoutParams weighted() { return new LinearLayout.LayoutParams(0, dp(55), 1); }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+    private GradientDrawable rounded(int fill, int stroke, int radius) { GradientDrawable shape = new GradientDrawable(); shape.setColor(fill); shape.setCornerRadius(dp(radius)); if (stroke != Color.TRANSPARENT) shape.setStroke(dp(1), stroke); return shape; }
     private static String icon(Entry e) { return e.mime.startsWith("image/") ? "IMG" : e.mime.contains("pdf") ? "PDF" : "DOC"; }
     private static String formatSize(long bytes) { if (bytes < 1024) return bytes + " B"; if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024d); return String.format("%.1f MB", bytes / 1048576d); }
     interface Task<T> { T run() throws Exception; }
