@@ -148,7 +148,7 @@ final class ApiClient {
     }
 
     private HttpURLConnection open(String method, String path, boolean auth) throws Exception {
-        if (!baseUrl.startsWith("https://") && !baseUrl.startsWith("http://")) throw new Exception("Indirizzo server non valido");
+        if (!baseUrl.startsWith("https://")) throw new Exception("Il server deve utilizzare HTTPS");
         HttpURLConnection connection = (HttpURLConnection) new URL(baseUrl + path).openConnection();
         connection.setRequestMethod(method);
         connection.setConnectTimeout(15000);
