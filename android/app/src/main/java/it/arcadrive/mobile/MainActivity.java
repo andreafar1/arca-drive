@@ -346,7 +346,7 @@ public final class MainActivity extends Activity {
         if (galleryEntries.isEmpty()) { showDrive(); return; }
         Entry entry = galleryEntries.get(galleryIndex);
         LinearLayout root = viewerPage(); root.addView(viewerHeader(entry.name));
-        ImageView image = new ImageView(this); image.setScaleType(ImageView.ScaleType.FIT_CENTER); image.setBackgroundColor(Color.rgb(238, 241, 245)); image.setContentDescription("Anteprima " + entry.name);
+        ZoomImageView image = new ZoomImageView(this); image.setBackgroundColor(Color.rgb(238, 241, 245)); image.setContentDescription("Anteprima " + entry.name);
         root.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         LinearLayout controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER); controls.setPadding(dp(14), dp(10), dp(14), dp(10)); controls.setBackgroundColor(Color.WHITE);
         Button previous = secondary("←  Precedente"); Button next = secondary("Successiva  →");
@@ -354,12 +354,7 @@ public final class MainActivity extends Activity {
         controls.addView(previous, new LinearLayout.LayoutParams(0, dp(48), 1)); controls.addView(counter, new LinearLayout.LayoutParams(dp(80), dp(48))); controls.addView(next, new LinearLayout.LayoutParams(0, dp(48), 1)); root.addView(controls); setContentView(root);
         previous.setEnabled(galleryIndex > 0); next.setEnabled(galleryIndex < galleryEntries.size() - 1);
         previous.setOnClickListener(v -> navigateGallery(-1)); next.setOnClickListener(v -> navigateGallery(1));
-        final float[] touchX = new float[1];
-        image.setOnTouchListener((v, event) -> {
-            if (event.getAction() == android.view.MotionEvent.ACTION_DOWN) { touchX[0] = event.getX(); return true; }
-            if (event.getAction() == android.view.MotionEvent.ACTION_UP) { float distance = event.getX() - touchX[0]; if (Math.abs(distance) > dp(55)) navigateGallery(distance < 0 ? 1 : -1); else v.performClick(); return true; }
-            return true;
-        });
+        image.setHorizontalSwipeListener(this::navigateGallery);
         int requestId = ++galleryRequestId; busy("Caricamento immagine…");
         async(() -> {
             File directory = new File(getCacheDir(), "previews"); directory.mkdirs(); File destination = new File(directory, "image-" + entry.id);
@@ -572,7 +567,7 @@ public final class MainActivity extends Activity {
         @Override public Object getItem(int position) { return position; }
         @Override public long getItemId(int position) { return position; }
         @Override public View getView(int position, View convertView, ViewGroup parent) {
-            ImageView pageView = convertView instanceof ImageView ? (ImageView) convertView : new ImageView(MainActivity.this);
+            ZoomImageView pageView = convertView instanceof ZoomImageView ? (ZoomImageView) convertView : new ZoomImageView(MainActivity.this);
             if (pageView.getDrawable() instanceof android.graphics.drawable.BitmapDrawable) {
                 Bitmap previous = ((android.graphics.drawable.BitmapDrawable) pageView.getDrawable()).getBitmap(); if (previous != null && !previous.isRecycled()) previous.recycle();
             }
@@ -581,7 +576,9 @@ public final class MainActivity extends Activity {
             int height = Math.max(1, Math.round(width * (page.getHeight() / (float) page.getWidth())));
             Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888); bitmap.eraseColor(Color.WHITE);
             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY); page.close();
-            pageView.setImageBitmap(bitmap); pageView.setAdjustViewBounds(true); pageView.setScaleType(ImageView.ScaleType.FIT_CENTER); pageView.setBackgroundColor(Color.WHITE); pageView.setContentDescription("Pagina " + (position + 1)); return pageView;
+            pageView.setImageBitmap(bitmap); pageView.setBackgroundColor(Color.WHITE); pageView.setContentDescription("Pagina " + (position + 1));
+            pageView.setLayoutParams(new android.widget.AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, height));
+            return pageView;
         }
     }
 
