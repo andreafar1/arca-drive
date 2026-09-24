@@ -55,6 +55,19 @@ for (let attempt = 1; attempt <= 30; attempt++) {
 }
 
 const expiredUploads = await pool.query("DELETE FROM upload_sessions WHERE expires_at<=now() RETURNING storage_name");
+await pool.query(
+  `DELETE FROM entries empty_folder
+   WHERE empty_folder.name='Backup telefono' AND empty_folder.kind='folder'
+     AND empty_folder.parent_id IS NULL AND empty_folder.is_trashed=false
+     AND NOT EXISTS (SELECT 1 FROM entries child WHERE child.parent_id=empty_folder.id)
+     AND EXISTS (
+       SELECT 1 FROM entries sibling
+       WHERE sibling.owner_id=empty_folder.owner_id AND sibling.id<>empty_folder.id
+         AND sibling.name='Backup telefono' AND sibling.kind='folder'
+         AND sibling.parent_id IS NULL AND sibling.is_trashed=false
+         AND (sibling.created_at<empty_folder.created_at OR EXISTS (SELECT 1 FROM entries content WHERE content.parent_id=sibling.id))
+     )`
+);
 await Promise.all(expiredUploads.rows.map(row => fs.unlink(path.join(STORAGE_DIR, row.storage_name)).catch(() => {})));
 await pool.query("DELETE FROM device_sessions WHERE expires_at<=now() OR revoked_at<now()-interval '30 days'");
 await pool.query('DELETE FROM wopi_locks WHERE expires_at<=now()');
@@ -777,6 +790,7 @@ app.get('/api/entries', auth, async (req, res) => {
   const params = [req.user.sub, trash, parentId, search ? `%${search}%` : null, images];
   const { rows } = await pool.query(
     `SELECT e.id,e.parent_id,e.name,e.kind,e.mime_type,e.size_bytes,e.is_system,e.is_trashed,e.created_at,e.updated_at,
+       COALESCE(e.source_modified_at,e.created_at) AS display_date,
        u.name AS owner_name, (e.owner_id = $1) AS owned
      FROM entries e
      JOIN users u ON u.id=e.owner_id
@@ -787,7 +801,7 @@ app.get('/api/entries', auth, async (req, res) => {
        AND ($4::text IS NULL OR e.name ILIKE $4)
        AND (NOT $5::boolean OR (e.kind='file' AND e.mime_type LIKE 'image/%'))
      ORDER BY
-       CASE WHEN $5::boolean THEN e.created_at END DESC,
+       CASE WHEN $5::boolean THEN COALESCE(e.source_modified_at,e.created_at) END DESC,
        CASE WHEN NOT $5::boolean THEN e.kind END DESC,
        CASE WHEN NOT $5::boolean THEN lower(e.name) END`,
     params
@@ -826,6 +840,31 @@ app.post('/api/folders', auth, writable, async (req, res) => {
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
+});
+
+app.post('/api/backup/folder', auth, writable, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`phone-backup:${req.user.sub}`]);
+    let result = await client.query(
+      `SELECT id,name,kind FROM entries
+       WHERE owner_id=$1 AND parent_id IS NULL AND kind='folder' AND name='Backup telefono' AND is_trashed=false
+       ORDER BY created_at LIMIT 1`, [req.user.sub]
+    );
+    if (!result.rows[0]) {
+      result = await client.query(
+        `INSERT INTO entries(parent_id,owner_id,name,kind) VALUES(NULL,$1,'Backup telefono','folder') RETURNING id,name,kind`,
+        [req.user.sub]
+      );
+      await recordChange(client, result.rows[0].id, 'created', { kind: 'folder', parentId: null });
+    }
+    await client.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: error.message });
+  } finally { client.release(); }
 });
 
 app.post('/api/uploads', auth, writable, async (req, res) => {
@@ -989,11 +1028,13 @@ app.post('/api/files', auth, writable, upload.array('files', 20), async (req, re
   try {
     await client.query('BEGIN');
     const created = [];
+    const sourceModifiedAt = Number(req.body.sourceModifiedAt);
+    const sourceDate = Number.isFinite(sourceModifiedAt) && sourceModifiedAt > 0 ? new Date(sourceModifiedAt) : null;
     for (const file of req.files || []) {
       const { rows } = await client.query(
-        `INSERT INTO entries(parent_id,owner_id,name,kind,mime_type,size_bytes,storage_name)
-         VALUES($1,$2,$3,'file',$4,$5,$6) RETURNING *`,
-        [parentId, req.user.sub, cleanName(Buffer.from(file.originalname, 'latin1').toString('utf8')), file.mimetype, file.size, file.filename]
+        `INSERT INTO entries(parent_id,owner_id,name,kind,mime_type,size_bytes,storage_name,source_modified_at)
+         VALUES($1,$2,$3,'file',$4,$5,$6,$7) RETURNING *`,
+        [parentId, req.user.sub, cleanName(Buffer.from(file.originalname, 'latin1').toString('utf8')), file.mimetype, file.size, file.filename, sourceDate]
       );
       await recordChange(client, rows[0].id, 'created', { kind: 'file', parentId, sizeBytes: file.size });
       created.push(rows[0]);
@@ -1079,12 +1120,15 @@ app.post('/api/nas/files', auth, writable, upload.array('files', 20), async (req
   const createdPaths = [];
   try {
     const parent = await existingNasPath(req.body.path || '');
+    const sourceModifiedAt = Number(req.body.sourceModifiedAt);
+    const sourceDate = Number.isFinite(sourceModifiedAt) && sourceModifiedAt > 0 ? new Date(sourceModifiedAt) : null;
     const created = [];
     for (const file of temporaryFiles) {
       const name = cleanName(Buffer.from(file.originalname, 'latin1').toString('utf8'));
       const target = path.join(parent.real, name);
       if (!isInside(parent.root, target)) throw new Error('Percorso NAS non valido');
       await fs.copyFile(file.path, target, fs.constants.COPYFILE_EXCL);
+      if (sourceDate) await fs.utimes(target, new Date(), sourceDate);
       createdPaths.push(target);
       await fs.unlink(file.path);
       created.push({ id: parent.relative ? `${parent.relative}/${name}` : name, name, kind: 'file', nas: true });
