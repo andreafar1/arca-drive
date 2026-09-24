@@ -65,6 +65,23 @@ COLLABORA_PUBLIC_URL=https://office.example.it
 
 Il reverse proxy deve inoltrare anche le connessioni WebSocket di Collabora. Arca Drive comunica internamente con CODE e protegge i file tramite token WOPI temporanei. CODE è l'edizione di sviluppo gratuita di Collabora, indicata per test, uso domestico e startup; per un ambiente aziendale di produzione valuta Collabora Online Business.
 
+## Cartella NAS montata sulla VM
+
+Se una condivisione NAS è già montata sulla macchina Ubuntu, indica il percorso nel file `.env`:
+
+```env
+NAS_HOST_PATH=/mnt/arca-drive
+```
+
+Docker rende la cartella disponibile al servizio `app` nel percorso `/data/nas` in lettura e scrittura. Dopo una modifica al montaggio o al file `.env`, ricrea il container:
+
+```bash
+docker compose up -d --build --force-recreate app
+docker compose exec app ls -la /data/nas
+```
+
+Il comando `ls` deve mostrare i file del NAS. Il montaggio SMB deve essere attivo sulla VM prima dell'avvio del container. Non inserire le credenziali del NAS nel repository o nel file `compose.yaml`.
+
 ## Aggiornamento
 
 ```bash
