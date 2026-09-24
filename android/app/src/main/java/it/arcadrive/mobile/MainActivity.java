@@ -559,9 +559,11 @@ public final class MainActivity extends Activity {
     private void entryMenu(Entry entry) {
         if (entry.system) { toast("La cartella Immagini è fissa"); return; }
         if (entry.nas || "nas".equals(view)) {
-            new AlertDialog.Builder(this).setTitle(entry.name).setItems(new String[]{entry.folder() ? "Apri" : "Apri / visualizza", "Rinomina", "Elimina definitivamente"}, (d, which) -> {
+            new AlertDialog.Builder(this).setTitle(entry.name).setItems(new String[]{entry.folder() ? "Apri" : "Apri / visualizza", "Rinomina", "Copia", "Taglia / sposta", "Elimina definitivamente"}, (d, which) -> {
                 if (which == 0) openEntry(entry);
                 else if (which == 1) renameDialog(entry);
+                else if (which == 2) setClipboard(entry, false);
+                else if (which == 3) setClipboard(entry, true);
                 else confirmNasDelete(entry);
             }).show();
         } else if ("trash".equals(view)) {
@@ -599,11 +601,16 @@ public final class MainActivity extends Activity {
 
     private void pasteClipboard() {
         if (clipboardEntry == null) return;
-        if (!"files".equals(view)) { toast("Apri una cartella in I miei file per incollare"); return; }
+        if (clipboardEntry.nas != "nas".equals(view)) { toast("Sorgente e destinazione devono trovarsi entrambe nel NAS oppure in I miei file"); return; }
+        if (!"files".equals(view) && !"nas".equals(view)) { toast("Apri la cartella di destinazione per incollare"); return; }
         String parentId = currentFolder == null ? null : currentFolder.id;
         Entry source = clipboardEntry; boolean cut = clipboardCut;
         busy(cut ? "Spostamento…" : "Copia…");
-        async(() -> { if (cut) api.move(source.id, parentId); else api.copy(source.id, parentId); return true; }, ok -> {
+        async(() -> {
+            if (source.nas) { if (cut) api.moveNas(source.id, parentId); else api.copyNas(source.id, parentId); }
+            else { if (cut) api.move(source.id, parentId); else api.copy(source.id, parentId); }
+            return true;
+        }, ok -> {
             stopBusy();
             if (cut) { clipboardEntry = null; clipboardCut = false; pasteButton.setVisibility(View.GONE); }
             toast(cut ? "Elemento spostato" : "Copia creata"); loadEntries();
