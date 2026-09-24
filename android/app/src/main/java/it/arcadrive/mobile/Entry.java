@@ -10,6 +10,7 @@ final class Entry {
     final String mime;
     final long size;
     final boolean system;
+    final boolean nas;
 
     Entry(JSONObject json) {
         id = json.optString("id");
@@ -19,6 +20,7 @@ final class Entry {
         mime = json.optString("mime_type", "application/octet-stream");
         size = json.optLong("size_bytes", 0);
         system = json.optBoolean("is_system", false);
+        nas = json.optBoolean("nas", false);
     }
 
     boolean folder() { return "folder".equals(kind); }
