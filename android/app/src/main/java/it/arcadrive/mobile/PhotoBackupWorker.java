@@ -79,11 +79,9 @@ public final class PhotoBackupWorker extends Worker {
             ScanResult scan = scanAndUpload(Uri.parse(treeValue), destination, nasDestination, api, settings);
             SharedPreferences.Editor update = settings.edit().putLong("backup_last_time", System.currentTimeMillis());
             if (initial) {
-                int total = settings.getInt("backup_initial_uploaded", 0) + scan.uploaded;
-                update.putInt("backup_initial_uploaded", total);
-                if (scan.limitReached) update.putString("backup_last_status", "Backup iniziale in corso: " + total + " file caricati");
+                if (scan.limitReached) update.putString("backup_last_status", "Backup iniziale in corso: " + scan.completed + " di " + scan.total);
                 else update.putBoolean("backup_initial_complete", true)
-                    .putString("backup_last_status", "Backup iniziale completato: " + total + " file caricati");
+                    .putString("backup_last_status", "Backup iniziale completato: " + scan.completed + " di " + scan.total);
             } else {
                 update.putString("backup_last_status", scan.uploaded == 0 ? "Backup aggiornato: nessun nuovo file" : scan.uploaded + " nuovi file caricati");
             }
@@ -103,6 +101,10 @@ public final class PhotoBackupWorker extends Worker {
         Deque<String> directories = new ArrayDeque<>();
         directories.add(DocumentsContract.getTreeDocumentId(treeUri));
         int uploaded = 0;
+        int total = 0;
+        int completed = 0;
+        boolean pending = false;
+        settings.edit().putInt("backup_source_total", 0).putInt("backup_uploaded_total", 0).apply();
         boolean includeVideos = settings.getBoolean("backup_include_videos", false);
         long maximumBytes = settings.getLong("backup_max_bytes", 200L * 1024 * 1024);
         String[] projection = {
@@ -112,12 +114,12 @@ public final class PhotoBackupWorker extends Worker {
             DocumentsContract.Document.COLUMN_SIZE,
             DocumentsContract.Document.COLUMN_LAST_MODIFIED
         };
-        while (!directories.isEmpty() && uploaded < MAX_FILES_PER_RUN && !isStopped()) {
+        while (!directories.isEmpty() && !isStopped()) {
             String parentId = directories.removeFirst();
             Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentId);
             try (Cursor cursor = resolver.query(children, projection, null, null, null)) {
                 if (cursor == null) continue;
-                while (cursor.moveToNext() && uploaded < MAX_FILES_PER_RUN && !isStopped()) {
+                while (cursor.moveToNext() && !isStopped()) {
                     String documentId = cursor.getString(0);
                     String name = cursor.getString(1);
                     String mime = cursor.getString(2);
@@ -126,24 +128,42 @@ public final class PhotoBackupWorker extends Worker {
                     if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) { directories.addLast(documentId); continue; }
                     if (mime == null || (!mime.startsWith("image/") && !(includeVideos && mime.startsWith("video/")))) continue;
                     if (maximumBytes > 0 && size > maximumBytes) continue;
+                    total++;
                     String key = "uploaded_" + digest(documentId + ':' + size + ':' + modified);
-                    if (settings.getBoolean(key, false)) continue;
+                    if (settings.getBoolean(key, false)) {
+                        completed++;
+                        settings.edit().putInt("backup_source_total", total).putInt("backup_uploaded_total", completed).apply();
+                        continue;
+                    }
+                    if (uploaded >= MAX_FILES_PER_RUN) {
+                        pending = true;
+                        settings.edit().putInt("backup_source_total", total).putInt("backup_uploaded_total", completed).apply();
+                        continue;
+                    }
                     Uri document = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
                     String uploadName = name == null || name.isBlank() ? "media-" + System.currentTimeMillis() : name;
                     if (nasDestination) api.uploadNas(resolver, document, uploadName, mime, destination, sent -> {});
                     else api.upload(resolver, document, uploadName, mime, destination, sent -> {});
-                    settings.edit().putBoolean(key, true).apply();
                     uploaded++;
+                    completed++;
+                    settings.edit().putBoolean(key, true)
+                        .putInt("backup_source_total", total)
+                        .putInt("backup_uploaded_total", completed).apply();
                 }
             }
         }
-        return new ScanResult(uploaded, uploaded >= MAX_FILES_PER_RUN);
+        settings.edit().putInt("backup_source_total", total).putInt("backup_uploaded_total", completed).apply();
+        return new ScanResult(uploaded, total, completed, pending || isStopped());
     }
 
     private static final class ScanResult {
         final int uploaded;
+        final int total;
+        final int completed;
         final boolean limitReached;
-        ScanResult(int uploaded, boolean limitReached) { this.uploaded = uploaded; this.limitReached = limitReached; }
+        ScanResult(int uploaded, int total, int completed, boolean limitReached) {
+            this.uploaded = uploaded; this.total = total; this.completed = completed; this.limitReached = limitReached;
+        }
     }
 
     private static String digest(String value) throws Exception {
