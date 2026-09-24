@@ -26,6 +26,7 @@ import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.graphics.pdf.PdfRenderer;
 import android.provider.OpenableColumns;
+import android.provider.DocumentsContract;
 import android.text.InputType;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -43,6 +44,7 @@ import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ImageView;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -123,6 +125,7 @@ public final class MainActivity extends Activity {
     private Entry clipboardEntry;
     private boolean clipboardCut;
     private Button pasteButton;
+    private boolean backupSettingsOpen;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -211,6 +214,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showDrive() {
+        backupSettingsOpen = false;
         closeInternalViewer();
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); applyAppBackground(root);
         LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(12), dp(10), dp(12), dp(10)); header.setBackgroundColor(NAVY);
@@ -509,11 +513,16 @@ public final class MainActivity extends Activity {
             Uri tree = data.getData();
             try { getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
             catch (Exception error) { toast("Impossibile conservare l’accesso alla cartella"); return; }
-            getSharedPreferences(PhotoBackupWorker.SETTINGS, MODE_PRIVATE).edit()
-                .putString("backup_tree_uri", tree.toString()).putBoolean("backup_enabled", true).putBoolean("backup_wifi_only", true)
-                .putString("backup_last_status", "Backup configurato").apply();
+            android.content.SharedPreferences backupSettings = getSharedPreferences(PhotoBackupWorker.SETTINGS, MODE_PRIVATE);
+            android.content.SharedPreferences.Editor backupEditor = backupSettings.edit()
+                .putString("backup_tree_uri", tree.toString()).putString("backup_source_name", DocumentsContract.getTreeDocumentId(tree))
+                .putBoolean("backup_enabled", true).putString("backup_last_status", "Backup configurato");
+            if (!backupSettings.contains("backup_wifi_only")) backupEditor.putBoolean("backup_wifi_only", true);
+            if (!backupSettings.contains("backup_frequency_minutes")) backupEditor.putLong("backup_frequency_minutes", 360);
+            if (!backupSettings.contains("backup_max_bytes")) backupEditor.putLong("backup_max_bytes", 200L * 1024 * 1024);
+            backupEditor.apply();
             PhotoBackupWorker.schedule(this); PhotoBackupWorker.runNow(this);
-            toast("Backup foto attivato"); return;
+            toast("Backup foto attivato"); showPhotoBackupSettings(); return;
         }
         if (requestCode != PICK_FILE) return;
         Uri uri = data.getData(); String[] metadata = fileMetadata(uri);
@@ -624,34 +633,70 @@ public final class MainActivity extends Activity {
     private void accountMenu() {
         new AlertDialog.Builder(this).setTitle("Account").setItems(new String[]{"Aggiorna", "Backup foto", "Aspetto e sfondo", "Cambia server", "Esci"}, (d, which) -> {
             if (which == 0) loadEntries();
-            if (which == 1) photoBackupMenu();
+            if (which == 1) showPhotoBackupSettings();
             if (which == 2) appearanceMenu();
             if (which == 3) { api.logout(); showServerSetup(); }
             if (which == 4) { api.logout(); showLogin(); }
         }).show();
     }
 
-    private void photoBackupMenu() {
+    private void showPhotoBackupSettings() {
+        backupSettingsOpen = true;
         android.content.SharedPreferences settings = getSharedPreferences(PhotoBackupWorker.SETTINGS, MODE_PRIVATE);
         boolean enabled = settings.getBoolean("backup_enabled", false);
-        boolean wifiOnly = settings.getBoolean("backup_wifi_only", true);
-        String last = settings.getString("backup_last_status", enabled ? "In attesa del primo backup" : "Non configurato");
-        long lastTime = settings.getLong("backup_last_time", 0);
-        String detail = last + (lastTime > 0 ? "\nUltimo tentativo: " + new SimpleDateFormat("dd MMM yyyy · HH:mm", Locale.ITALIAN).format(new Date(lastTime)) : "") + "\nDestinazione: I miei file / Backup telefono";
-        String[] choices = enabled
-            ? new String[]{"Stato: " + detail, "Avvia backup ora", wifiOnly ? "Solo Wi-Fi: attivo" : "Solo Wi-Fi: disattivato", "Cambia cartella del telefono", "Disattiva backup"}
-            : new String[]{"Scegli la cartella delle foto"};
-        new AlertDialog.Builder(this).setTitle("Backup foto").setItems(choices, (dialog, which) -> {
-            if (!enabled) { chooseBackupFolder(); return; }
-            if (which == 1) { PhotoBackupWorker.runNow(this); toast("Backup avviato in background"); }
-            else if (which == 2) {
-                settings.edit().putBoolean("backup_wifi_only", !wifiOnly).apply(); PhotoBackupWorker.schedule(this); photoBackupMenu();
-            } else if (which == 3) chooseBackupFolder();
-            else if (which == 4) {
-                settings.edit().putBoolean("backup_enabled", false).apply(); PhotoBackupWorker.disable(this); toast("Backup foto disattivato");
-            }
-        }).show();
+        LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); applyAppBackground(root);
+        LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(10), dp(10), dp(14), dp(8)); header.setBackgroundColor(NAVY);
+        Button close = smallButton("←"); header.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        TextView heading = text("Opzioni backup", 20); heading.setTypeface(medium); heading.setTextColor(Color.WHITE); heading.setGravity(Gravity.CENTER_VERTICAL); header.addView(heading, new LinearLayout.LayoutParams(0, dp(48), 1)); root.addView(header);
+        ViewCompat.setOnApplyWindowInsetsListener(header, (view, insets) -> { Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()); header.setPadding(dp(10), bars.top + dp(8), dp(14), dp(8)); return insets; });
+        close.setOnClickListener(v -> { backupSettingsOpen = false; showDrive(); });
+
+        ScrollView scroll = new ScrollView(this); LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); body.setPadding(dp(18), dp(18), dp(18), dp(28)); scroll.addView(body); root.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        TextView statusTitle = text(enabled ? "Backup attivo" : "Backup non configurato", 18); statusTitle.setTypeface(medium); statusTitle.setTextColor(enabled ? Color.rgb(24, 143, 113) : Color.rgb(105, 117, 136)); body.addView(statusTitle);
+        String last = settings.getString("backup_last_status", enabled ? "In attesa del primo backup" : "Scegli una cartella per iniziare"); long lastTime = settings.getLong("backup_last_time", 0);
+        TextView status = text(last + (lastTime > 0 ? "\n" + new SimpleDateFormat("dd MMM yyyy · HH:mm", Locale.ITALIAN).format(new Date(lastTime)) : ""), 13); status.setTextColor(Color.rgb(91, 104, 125)); status.setPadding(0, dp(6), 0, dp(18)); body.addView(status);
+
+        TextView sourceLabel = text("CARTELLA DEL TELEFONO", 11); sourceLabel.setTypeface(bold); sourceLabel.setTextColor(Color.rgb(112, 124, 143)); body.addView(sourceLabel);
+        Button source = secondary(settings.getString("backup_source_name", "Scegli la cartella delle foto")); body.addView(source, spaced()); source.setOnClickListener(v -> chooseBackupFolder());
+
+        String destination = settings.getString("backup_destination", "drive");
+        TextView destinationLabel = text("DESTINAZIONE", 11); destinationLabel.setTypeface(bold); destinationLabel.setTextColor(Color.rgb(112, 124, 143)); destinationLabel.setPadding(0, dp(22), 0, 0); body.addView(destinationLabel);
+        Button destinationButton = secondary("nas".equals(destination) ? "NAS / Backup telefono" : "I miei file / Backup telefono"); body.addView(destinationButton, spaced());
+        destinationButton.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("Destinazione backup").setItems(new String[]{"I miei file / Backup telefono", "NAS / Backup telefono"}, (d, which) -> {
+            settings.edit().putString("backup_destination", which == 1 ? "nas" : "drive").apply(); showPhotoBackupSettings();
+        }).show());
+
+        long frequency = settings.getLong("backup_frequency_minutes", 360);
+        Button frequencyButton = secondary("Frequenza: " + frequencyLabel(frequency)); LinearLayout.LayoutParams frequencyParams = spaced(); frequencyParams.topMargin = dp(18); body.addView(frequencyButton, frequencyParams);
+        frequencyButton.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("Frequenza backup").setItems(new String[]{"Ogni 15 minuti", "Ogni ora", "Ogni 6 ore", "Ogni 24 ore"}, (d, which) -> {
+            long[] values = {15, 60, 360, 1440}; settings.edit().putLong("backup_frequency_minutes", values[which]).apply(); if (enabled) PhotoBackupWorker.schedule(this); showPhotoBackupSettings();
+        }).show());
+
+        Switch wifi = backupSwitch("Esegui solo tramite Wi-Fi", settings.getBoolean("backup_wifi_only", true)); body.addView(wifi, spaced());
+        wifi.setOnCheckedChangeListener((button, checked) -> { settings.edit().putBoolean("backup_wifi_only", checked).apply(); if (enabled) PhotoBackupWorker.schedule(this); });
+        Switch charging = backupSwitch("Esegui solo durante la ricarica", settings.getBoolean("backup_charging_only", false)); body.addView(charging, spaced());
+        charging.setOnCheckedChangeListener((button, checked) -> { settings.edit().putBoolean("backup_charging_only", checked).apply(); if (enabled) PhotoBackupWorker.schedule(this); });
+        Switch videos = backupSwitch("Includi anche i video", settings.getBoolean("backup_include_videos", false)); body.addView(videos, spaced());
+        videos.setOnCheckedChangeListener((button, checked) -> settings.edit().putBoolean("backup_include_videos", checked).apply());
+
+        long maximum = settings.getLong("backup_max_bytes", 200L * 1024 * 1024);
+        Button maximumButton = secondary("Dimensione massima: " + formatSize(maximum)); body.addView(maximumButton, spaced());
+        maximumButton.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("Dimensione massima per file").setItems(new String[]{"25 MB", "50 MB", "100 MB", "200 MB"}, (d, which) -> {
+            long[] values = {25L * 1024 * 1024, 50L * 1024 * 1024, 100L * 1024 * 1024, 200L * 1024 * 1024}; settings.edit().putLong("backup_max_bytes", values[which]).apply(); showPhotoBackupSettings();
+        }).show());
+
+        Button run = primary(enabled ? "Avvia backup ora" : "Scegli cartella e attiva"); LinearLayout.LayoutParams runParams = spaced(); runParams.topMargin = dp(24); body.addView(run, runParams);
+        run.setOnClickListener(v -> { if (enabled) { PhotoBackupWorker.runNow(this); toast("Backup avviato in background"); } else chooseBackupFolder(); });
+        if (enabled) {
+            Button disable = secondary("Disattiva backup"); disable.setTextColor(Color.rgb(190, 55, 70)); body.addView(disable, spaced()); disable.setOnClickListener(v -> {
+                settings.edit().putBoolean("backup_enabled", false).apply(); PhotoBackupWorker.disable(this); toast("Backup foto disattivato"); showPhotoBackupSettings();
+            });
+        }
+        setContentView(root);
     }
+
+    private Switch backupSwitch(String label, boolean checked) { Switch control = new Switch(this); control.setText(label); control.setTextSize(15); control.setTypeface(regular); control.setTextColor(NAVY); control.setGravity(Gravity.CENTER_VERTICAL); control.setPadding(dp(12), 0, dp(8), 0); control.setBackground(rounded(Color.WHITE, LINE, 12)); control.setChecked(checked); return control; }
+    private String frequencyLabel(long minutes) { return minutes <= 15 ? "15 minuti" : minutes <= 60 ? "1 ora" : minutes <= 360 ? "6 ore" : "24 ore"; }
 
     private void appearanceMenu() {
         String[] choices = {"Originale", "Verde acqua chiaro", "Azzurro chiaro", "Grigio caldo", "Scegli una foto…"};
@@ -721,7 +766,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override public void onBackPressed() {
-        if (drawerOpen) closeDrawer(); else if (internalViewer) showDrive(); else if (currentFolder != null) goBack(); else super.onBackPressed();
+        if (backupSettingsOpen) { backupSettingsOpen = false; showDrive(); } else if (drawerOpen) closeDrawer(); else if (internalViewer) showDrive(); else if (currentFolder != null) goBack(); else super.onBackPressed();
     }
 
     private <T> void async(Task<T> task, Success<T> success) {
