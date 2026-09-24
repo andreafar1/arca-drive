@@ -11,8 +11,12 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.graphics.ColorFilter;
+import android.graphics.PixelFormat;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.InsetDrawable;
 import android.net.Uri;
@@ -51,6 +55,7 @@ import org.json.JSONObject;
 import org.json.JSONArray;
 
 import java.io.File;
+import java.io.InputStream;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -66,6 +71,7 @@ import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
     private static final int PICK_FILE = 40;
+    private static final int PICK_BACKGROUND = 41;
     private static final int NAVY = Color.rgb(16, 26, 48);
     private static final int MINT = Color.rgb(49, 199, 163);
     private static final int PAGE = Color.rgb(246, 248, 251);
@@ -202,7 +208,7 @@ public final class MainActivity extends Activity {
 
     private void showDrive() {
         closeInternalViewer();
-        LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(PAGE);
+        LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); applyAppBackground(root);
         LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(12), dp(10), dp(12), dp(10)); header.setBackgroundColor(NAVY);
         back = smallButton(currentFolder == null ? "☰" : "←"); header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
         title = text("I miei file", 20); title.setTypeface(medium); title.setGravity(Gravity.CENTER_VERTICAL); title.setSingleLine(); title.setTextColor(Color.WHITE); header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
@@ -215,7 +221,7 @@ public final class MainActivity extends Activity {
         search.setBackground(rounded(Color.WHITE, LINE, 14));
         LinearLayout searchRow = new LinearLayout(this); searchRow.setGravity(Gravity.CENTER_VERTICAL); searchRow.setPadding(dp(16), dp(16), dp(16), dp(8)); searchRow.addView(search, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))); root.addView(searchRow);
 
-        list = new ListView(this); list.setDivider(new android.graphics.drawable.ColorDrawable(LINE)); list.setDividerHeight(dp(1)); list.setPadding(dp(16), dp(4), dp(16), dp(6)); list.setClipToPadding(false); list.setBackgroundColor(PAGE); root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        list = new ListView(this); list.setDivider(new android.graphics.drawable.ColorDrawable(LINE)); list.setDividerHeight(dp(1)); list.setPadding(dp(16), dp(4), dp(16), dp(6)); list.setClipToPadding(false); list.setBackgroundColor(Color.TRANSPARENT); root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         LinearLayout nav = new LinearLayout(this); nav.setGravity(Gravity.CENTER); nav.setPadding(dp(10), dp(8), dp(10), dp(8)); nav.setBackgroundColor(Color.WHITE); nav.setElevation(dp(3));
         navFiles = navButton("▦  File"); navImages = navButton("▧  Immagini"); navTrash = navButton("♲  Cestino");
         nav.addView(navFiles, weighted()); nav.addView(navImages, weighted()); nav.addView(navTrash, weighted()); root.addView(nav);
@@ -435,7 +441,7 @@ public final class MainActivity extends Activity {
 
     private void navigateGallery(int direction) { int next = galleryIndex + direction; if (next < 0 || next >= galleryEntries.size()) return; galleryIndex = next; showImageGallery(); }
 
-    private LinearLayout viewerPage() { LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(PAGE); return root; }
+    private LinearLayout viewerPage() { LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); applyAppBackground(root); return root; }
 
     private LinearLayout viewerHeader(String name) {
         LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(10), dp(10), dp(10), dp(8)); header.setBackgroundColor(NAVY);
@@ -475,9 +481,21 @@ public final class MainActivity extends Activity {
         startActivityForResult(intent, PICK_FILE);
     }
 
+    private void chooseBackgroundImage() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, PICK_BACKGROUND);
+    }
+
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != PICK_FILE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (requestCode == PICK_BACKGROUND) {
+            Uri background = data.getData();
+            try { getContentResolver().takePersistableUriPermission(background, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) {}
+            getPreferences(MODE_PRIVATE).edit().putString("background_style", "image").putString("background_uri", background.toString()).apply();
+            toast("Sfondo applicato"); showDrive(); return;
+        }
+        if (requestCode != PICK_FILE) return;
         Uri uri = data.getData(); String[] metadata = fileMetadata(uri);
         busy("Caricamento di " + metadata[0]);
         async(() -> { if ("nas".equals(view)) api.uploadNas(getContentResolver(), uri, metadata[0], metadata[1], currentFolder == null ? null : currentFolder.id, sent -> {}); else api.upload(getContentResolver(), uri, metadata[0], metadata[1], currentFolder == null ? null : currentFolder.id, sent -> {}); return true; }, ignored -> {
@@ -584,11 +602,44 @@ public final class MainActivity extends Activity {
     }
 
     private void accountMenu() {
-        new AlertDialog.Builder(this).setTitle("Account").setItems(new String[]{"Aggiorna", "Cambia server", "Esci"}, (d, which) -> {
+        new AlertDialog.Builder(this).setTitle("Account").setItems(new String[]{"Aggiorna", "Aspetto e sfondo", "Cambia server", "Esci"}, (d, which) -> {
             if (which == 0) loadEntries();
-            if (which == 1) { api.logout(); showServerSetup(); }
-            if (which == 2) { api.logout(); showLogin(); }
+            if (which == 1) appearanceMenu();
+            if (which == 2) { api.logout(); showServerSetup(); }
+            if (which == 3) { api.logout(); showLogin(); }
         }).show();
+    }
+
+    private void appearanceMenu() {
+        String[] choices = {"Originale", "Verde acqua chiaro", "Azzurro chiaro", "Grigio caldo", "Scegli una foto…"};
+        new AlertDialog.Builder(this).setTitle("Aspetto e sfondo").setItems(choices, (dialog, which) -> {
+            if (which == 4) { chooseBackgroundImage(); return; }
+            String style = new String[]{"default", "mint", "blue", "warm"}[which];
+            getPreferences(MODE_PRIVATE).edit().putString("background_style", style).remove("background_uri").apply();
+            showDrive();
+        }).show();
+    }
+
+    private void applyAppBackground(View target) {
+        String style = getPreferences(MODE_PRIVATE).getString("background_style", "default");
+        if ("image".equals(style)) {
+            String value = getPreferences(MODE_PRIVATE).getString("background_uri", "");
+            try {
+                Bitmap bitmap = decodeBackground(Uri.parse(value));
+                if (bitmap != null) { target.setBackground(new AppBackgroundDrawable(bitmap)); return; }
+            } catch (Exception ignored) {}
+        }
+        int color = "mint".equals(style) ? Color.rgb(236, 249, 246) : "blue".equals(style) ? Color.rgb(237, 244, 252) : "warm".equals(style) ? Color.rgb(247, 243, 237) : PAGE;
+        target.setBackgroundColor(color);
+    }
+
+    private Bitmap decodeBackground(Uri uri) throws Exception {
+        BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true;
+        try (InputStream input = getContentResolver().openInputStream(uri)) { BitmapFactory.decodeStream(input, null, bounds); }
+        int maximum = Math.max(getResources().getDisplayMetrics().widthPixels, getResources().getDisplayMetrics().heightPixels) * 2;
+        int sample = 1; while (Math.max(bounds.outWidth, bounds.outHeight) / sample > maximum) sample *= 2;
+        BitmapFactory.Options options = new BitmapFactory.Options(); options.inSampleSize = sample;
+        try (InputStream input = getContentResolver().openInputStream(uri)) { return BitmapFactory.decodeStream(input, null, options); }
     }
 
     private void switchView(String next) {
@@ -640,7 +691,7 @@ public final class MainActivity extends Activity {
     private void fail(Exception error) { toast(error.getMessage() == null ? "Operazione non riuscita" : error.getMessage()); }
     private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
 
-    private LinearLayout page() { LinearLayout page = new LinearLayout(this); page.setOrientation(LinearLayout.VERTICAL); page.setPadding(dp(28), dp(54), dp(28), dp(24)); page.setBackgroundColor(Color.WHITE); return page; }
+    private LinearLayout page() { LinearLayout page = new LinearLayout(this); page.setOrientation(LinearLayout.VERTICAL); page.setPadding(dp(28), dp(54), dp(28), dp(24)); applyAppBackground(page); return page; }
     private TextView brand(String subtitle) { TextView text = text("A  Arca Drive\n" + subtitle, 25); text.setTextColor(NAVY); text.setTypeface(bold); return text; }
     private TextView text(String value, int size) { TextView text = new TextView(this); text.setText(value); text.setTextSize(size); text.setTypeface(regular); text.setTextColor(NAVY); return text; }
     private EditText input(String hint, int type) { EditText input = new EditText(this); input.setHint(hint); input.setTextSize(16); input.setTypeface(regular); input.setInputType(type); input.setSingleLine(); input.setPadding(dp(14), 0, dp(14), 0); input.setBackground(rounded(Color.rgb(248, 250, 252), LINE, 12)); return input; }
@@ -699,6 +750,26 @@ public final class MainActivity extends Activity {
                 }
             });
         }
+    }
+
+    private final class AppBackgroundDrawable extends Drawable {
+        private final Bitmap bitmap;
+        private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        private final Paint veilPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        AppBackgroundDrawable(Bitmap bitmap) { this.bitmap = bitmap; veilPaint.setColor(Color.argb(210, 246, 248, 251)); }
+
+        @Override public void draw(Canvas canvas) {
+            Rect bounds = getBounds();
+            float scale = Math.max(bounds.width() / (float) bitmap.getWidth(), bounds.height() / (float) bitmap.getHeight());
+            float width = bitmap.getWidth() * scale; float height = bitmap.getHeight() * scale;
+            RectF destination = new RectF(bounds.centerX() - width / 2f, bounds.centerY() - height / 2f, bounds.centerX() + width / 2f, bounds.centerY() + height / 2f);
+            canvas.drawBitmap(bitmap, null, destination, bitmapPaint);
+            canvas.drawRect(bounds, veilPaint);
+        }
+
+        @Override public void setAlpha(int alpha) { bitmapPaint.setAlpha(alpha); invalidateSelf(); }
+        @Override public void setColorFilter(ColorFilter filter) { bitmapPaint.setColorFilter(filter); invalidateSelf(); }
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
     }
 
     private final class FileBadgeView extends View {
