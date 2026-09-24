@@ -54,6 +54,7 @@ final class ApiClient {
     JSONObject me() throws Exception { return request("GET", "/api/me", null, true, true).object(); }
 
     List<Entry> entries(String parentId, String view, String search) throws Exception {
+        if ("nas".equals(view)) return nasEntries(parentId, search);
         StringBuilder path = new StringBuilder("/api/entries?");
         if (parentId != null && "files".equals(view)) path.append("parentId=").append(enc(parentId)).append('&');
         if ("images".equals(view)) path.append("images=true&");
@@ -65,8 +66,22 @@ final class ApiClient {
         return result;
     }
 
+    private List<Entry> nasEntries(String pathValue, String search) throws Exception {
+        StringBuilder path = new StringBuilder("/api/nas?");
+        if (pathValue != null) path.append("path=").append(enc(pathValue)).append('&');
+        if (search != null && !search.isBlank()) path.append("q=").append(enc(search));
+        JSONArray data = new JSONArray(request("GET", path.toString(), null, true, true).body);
+        List<Entry> result = new ArrayList<>();
+        for (int i = 0; i < data.length(); i++) result.add(new Entry(data.getJSONObject(i)));
+        return result;
+    }
+
     void createFolder(String name, String parentId) throws Exception {
         request("POST", "/api/folders", new JSONObject().put("name", name).put("parentId", parentId == null ? JSONObject.NULL : parentId), true, true);
+    }
+
+    void createNasFolder(String name, String parentPath) throws Exception {
+        request("POST", "/api/nas/folders", new JSONObject().put("name", name).put("path", parentPath == null ? "" : parentPath), true, true);
     }
 
     List<Entry> folders() throws Exception {
@@ -87,6 +102,12 @@ final class ApiClient {
         request("PATCH", "/api/entries/" + id + "/rename", new JSONObject().put("name", name), true, true);
     }
 
+    void renameNas(String path, String name) throws Exception {
+        request("PATCH", "/api/nas/rename", new JSONObject().put("path", path).put("name", name), true, true);
+    }
+
+    void deleteNas(String path) throws Exception { request("DELETE", "/api/nas?path=" + enc(path), null, true, true); }
+
     void copy(String id, String parentId) throws Exception {
         request("POST", "/api/entries/" + id + "/copy", new JSONObject().put("parentId", parentId == null ? JSONObject.NULL : parentId), true, true);
     }
@@ -96,13 +117,22 @@ final class ApiClient {
     void permanentDelete(String id) throws Exception { request("DELETE", "/api/entries/" + id + "/permanent", null, true, true); }
 
     void upload(ContentResolver resolver, Uri uri, String displayName, String mime, String parentId, Progress progress) throws Exception {
+        uploadToPath(resolver, uri, displayName, mime, parentId, false, progress);
+    }
+
+    void uploadNas(ContentResolver resolver, Uri uri, String displayName, String mime, String parentPath, Progress progress) throws Exception {
+        uploadToPath(resolver, uri, displayName, mime, parentPath, true, progress);
+    }
+
+    private void uploadToPath(ContentResolver resolver, Uri uri, String displayName, String mime, String parentId, boolean nas, Progress progress) throws Exception {
         String boundary = "ArcaDrive" + System.currentTimeMillis();
-        HttpURLConnection connection = open("POST", "/api/files", true);
+        HttpURLConnection connection = open("POST", nas ? "/api/nas/files" : "/api/files", true);
         connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
         connection.setChunkedStreamingMode(256 * 1024);
         connection.setDoOutput(true);
         try (OutputStream out = connection.getOutputStream(); InputStream in = resolver.openInputStream(uri)) {
-            if (parentId != null) part(out, boundary, "parentId", parentId);
+            if (nas) part(out, boundary, "path", parentId == null ? "" : parentId);
+            else if (parentId != null) part(out, boundary, "parentId", parentId);
             write(out, "--" + boundary + "\r\nContent-Disposition: form-data; name=\"files\"; filename=\"" + displayName.replace("\"", "") + "\"\r\nContent-Type: " + mime + "\r\n\r\n");
             byte[] buffer = new byte[128 * 1024]; int read; long sent = 0;
             while ((read = in.read(buffer)) >= 0) { out.write(buffer, 0, read); sent += read; progress.sent(sent); }
@@ -112,8 +142,16 @@ final class ApiClient {
     }
 
     File download(String id, File destination) throws Exception {
-        HttpURLConnection connection = open("GET", "/api/entries/" + id + "/content", true);
-        if (connection.getResponseCode() == 401 && refresh()) connection = open("GET", "/api/entries/" + id + "/content", true);
+        return downloadPath("/api/entries/" + id + "/content", destination);
+    }
+
+    File downloadNas(String path, File destination) throws Exception {
+        return downloadPath("/api/nas/content?path=" + enc(path), destination);
+    }
+
+    private File downloadPath(String path, File destination) throws Exception {
+        HttpURLConnection connection = open("GET", path, true);
+        if (connection.getResponseCode() == 401 && refresh()) connection = open("GET", path, true);
         if (connection.getResponseCode() / 100 != 2) throw error(connection);
         try (InputStream in = connection.getInputStream(); OutputStream out = new FileOutputStream(destination)) {
             byte[] buffer = new byte[128 * 1024]; int read;
