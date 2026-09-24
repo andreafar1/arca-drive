@@ -3,6 +3,7 @@ import pg from 'pg';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
+import sharp from 'sharp';
 import * as OTPAuth from 'otpauth';
 import QRCode from 'qrcode';
 import crypto from 'node:crypto';
@@ -15,6 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const STORAGE_DIR = process.env.STORAGE_DIR || '/data/files';
 const NAS_DIR = path.resolve(process.env.NAS_DIR || '/data/nas');
+const THUMBNAIL_DIR = process.env.THUMBNAIL_DIR || '/tmp/arca-drive-thumbnails';
 const MAX_FILE_SIZE = Number(process.env.MAX_FILE_SIZE_MB || 200) * 1024 * 1024;
 const MAX_UPLOAD_CHUNK = Number(process.env.MAX_UPLOAD_CHUNK_MB || 10) * 1024 * 1024;
 const ACCESS_TOKEN_MINUTES = Number(process.env.ACCESS_TOKEN_MINUTES || 15);
@@ -30,6 +32,7 @@ if (!JWT_SECRET || JWT_SECRET.length < 32) throw new Error('JWT_SECRET must cont
 if (!DATABASE_URL && !process.env.PGHOST) throw new Error('Database configuration is required');
 
 await fs.mkdir(STORAGE_DIR, { recursive: true });
+await fs.mkdir(THUMBNAIL_DIR, { recursive: true });
 const pool = DATABASE_URL
   ? new Pool({ connectionString: DATABASE_URL })
   : new Pool({
@@ -282,6 +285,33 @@ function nasMime(name) {
     ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     mp4: 'video/mp4', mp3: 'audio/mpeg', zip: 'application/zip'
   })[extension] || 'application/octet-stream';
+}
+
+async function sendThumbnail(sourcePath, cacheIdentity, res) {
+  const cacheName = `${crypto.createHash('sha256').update(cacheIdentity).digest('hex')}.webp`;
+  const destination = path.join(THUMBNAIL_DIR, cacheName);
+  try {
+    await fs.access(destination);
+  } catch {
+    const temporary = `${destination}.${crypto.randomUUID()}.tmp`;
+    try {
+      await sharp(sourcePath, { failOn: 'none' })
+        .rotate()
+        .resize(192, 192, { fit: 'cover', position: 'centre', withoutEnlargement: true })
+        .webp({ quality: 76, effort: 4 })
+        .toFile(temporary);
+      await fs.rename(temporary, destination).catch(async error => {
+        if (error.code !== 'EEXIST') throw error;
+        await fs.unlink(temporary).catch(() => {});
+      });
+    } catch (error) {
+      await fs.unlink(temporary).catch(() => {});
+      throw error;
+    }
+  }
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.type('image/webp');
+  res.sendFile(destination);
 }
 
 async function ensureImagesFolder(userId, db = pool) {
@@ -1020,6 +1050,17 @@ app.get('/api/nas/content', auth, async (req, res) => {
   }
 });
 
+app.get('/api/nas/thumbnail', auth, async (req, res) => {
+  try {
+    const item = await existingNasPath(req.query.path || '');
+    const stat = await fs.stat(item.real);
+    if (!stat.isFile() || !nasMime(item.real).startsWith('image/')) return res.status(404).json({ error: 'Immagine NAS non trovata' });
+    await sendThumbnail(item.real, `nas:${item.real}:${stat.size}:${stat.mtimeMs}`, res);
+  } catch (error) {
+    res.status(error.status || (error.code === 'ENOENT' ? 404 : 400)).json({ error: error.code === 'ENOENT' ? 'Immagine NAS non trovata' : error.message });
+  }
+});
+
 app.post('/api/nas/folders', auth, writable, async (req, res) => {
   try {
     const destination = await newNasPath(req.body.path || '', req.body.name);
@@ -1211,6 +1252,18 @@ app.post('/api/wopi/files/:id', wopiToken, async (req, res) => {
     return res.status(200).end();
   }
   res.status(501).end();
+});
+
+app.get('/api/entries/:id/thumbnail', auth, async (req, res) => {
+  try {
+    const entry = await canAccess(req.params.id, req.user.sub, false);
+    if (!entry || entry.kind !== 'file' || entry.is_trashed || !entry.mime_type?.startsWith('image/')) return res.status(404).json({ error: 'Immagine non trovata' });
+    const source = path.join(STORAGE_DIR, entry.storage_name);
+    const stat = await fs.stat(source);
+    await sendThumbnail(source, `entry:${entry.id}:${stat.size}:${stat.mtimeMs}`, res);
+  } catch (error) {
+    res.status(error.code === 'ENOENT' ? 404 : 400).json({ error: error.code === 'ENOENT' ? 'Immagine non trovata' : error.message });
+  }
 });
 
 app.get('/api/entries/:id/content', auth, async (req, res) => {
