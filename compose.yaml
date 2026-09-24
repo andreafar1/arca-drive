@@ -48,6 +48,7 @@ services:
       WOPI_INTERNAL_URL: http://app:3000
     volumes:
       - file_data:/data/files
+      - ${NAS_HOST_PATH:-/mnt/arca-drive}:/data/nas:rw
     ports:
       - "${ARCA_DRIVE_PORT:-8080}:3000"
     security_opt:
