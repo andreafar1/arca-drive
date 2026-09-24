@@ -35,6 +35,13 @@ CREATE TABLE IF NOT EXISTS entries (
 );
 
 ALTER TABLE entries ADD COLUMN IF NOT EXISTS is_system boolean NOT NULL DEFAULT false;
+ALTER TABLE entries ADD COLUMN IF NOT EXISTS source_modified_at timestamptz;
+
+UPDATE entries
+SET source_modified_at = to_timestamp(substring(name FROM '[0-9]{8}_[0-9]{6}'), 'YYYYMMDD_HH24MISS')
+WHERE source_modified_at IS NULL
+  AND mime_type LIKE 'image/%'
+  AND name ~ '^(PXL_|IMG_)[0-9]{8}_[0-9]{6}';
 
 CREATE INDEX IF NOT EXISTS entries_parent_idx ON entries(parent_id);
 CREATE INDEX IF NOT EXISTS entries_owner_idx ON entries(owner_id);
