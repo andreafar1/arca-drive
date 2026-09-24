@@ -710,59 +710,35 @@ public final class MainActivity extends Activity {
         @Override protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
             paint.clearShadowLayer();
-            boolean pdf = entry.mime.contains("pdf");
+            String extension = entry.name.contains(".") ? entry.name.substring(entry.name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT) : "";
+            boolean pdf = entry.mime.contains("pdf") || "pdf".equals(extension);
             boolean image = entry.mime.startsWith("image/");
-            boolean sheet = entry.name.matches("(?i).*\\.(xlsx?|ods|csv)$");
-            int background = entry.folder() ? Color.rgb(230, 250, 244) : pdf ? Color.rgb(255, 232, 235) : image ? Color.rgb(238, 234, 255) : sheet ? Color.rgb(220, 247, 238) : Color.rgb(234, 238, 245);
-            int foreground = entry.folder() ? Color.rgb(49, 199, 163) : pdf ? Color.rgb(214, 78, 94) : image ? Color.rgb(109, 95, 208) : sheet ? Color.rgb(18, 139, 108) : Color.rgb(82, 100, 130);
+            boolean sheet = extension.matches("xlsx?|ods|csv");
+            boolean presentation = extension.matches("pptx?|odp");
+            boolean archive = extension.matches("zip|rar|7z|tar|gz");
+            boolean media = entry.mime.startsWith("video/") || entry.mime.startsWith("audio/");
+            int background = entry.folder() ? Color.rgb(229, 248, 243) : pdf ? Color.rgb(255, 232, 235) : sheet ? Color.rgb(224, 247, 239) : presentation ? Color.rgb(255, 239, 221) : image ? Color.rgb(238, 234, 255) : archive ? Color.rgb(241, 235, 255) : media ? Color.rgb(228, 241, 255) : Color.rgb(234, 238, 245);
+            int foreground = entry.folder() ? Color.rgb(40, 181, 147) : pdf ? Color.rgb(204, 61, 82) : sheet ? Color.rgb(20, 139, 106) : presentation ? Color.rgb(198, 104, 28) : image ? Color.rgb(105, 87, 202) : archive ? Color.rgb(118, 82, 181) : media ? Color.rgb(48, 112, 181) : Color.rgb(76, 94, 124);
             paint.setStyle(Paint.Style.FILL); paint.setColor(background);
             canvas.drawRoundRect(new RectF(0, 0, getWidth(), getHeight()), dp(11), dp(11), paint);
             paint.setColor(foreground); paint.setStrokeWidth(dp(2)); paint.setStrokeCap(Paint.Cap.ROUND); paint.setStrokeJoin(Paint.Join.ROUND);
             if (entry.folder()) drawFolder(canvas);
-            else if (image) drawImage(canvas);
-            else if (sheet) drawSheet(canvas);
-            else drawDocument(canvas, pdf ? "PDF" : "DOC");
+            else drawLabel(canvas, pdf ? "PDF" : sheet ? "XLS" : presentation ? "PPT" : image ? "IMG" : archive ? "ZIP" : media ? (entry.mime.startsWith("audio/") ? "AUD" : "VID") : extension.matches("txt|md|rtf") ? "TXT" : extension.isBlank() ? "FILE" : extension.substring(0, Math.min(4, extension.length())).toUpperCase(Locale.ROOT));
         }
 
         private void drawFolder(Canvas canvas) {
-            // Parte posteriore con linguetta, come una cartella aperta.
-            paint.setStyle(Paint.Style.FILL); paint.setColor(Color.rgb(22, 142, 117));
+            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(dp(2));
             path.reset(); path.moveTo(dp(8), dp(17)); path.quadTo(dp(8), dp(13), dp(12), dp(13));
-            path.lineTo(dp(20), dp(13)); path.quadTo(dp(22), dp(13), dp(23), dp(10));
-            path.quadTo(dp(24), dp(8), dp(27), dp(8)); path.lineTo(dp(37), dp(8));
-            path.quadTo(dp(40), dp(8), dp(40), dp(12)); path.lineTo(dp(40), dp(33)); path.lineTo(dp(8), dp(33)); path.close(); canvas.drawPath(path, paint);
-
-            // Fogli visibili all'interno.
-            paint.setColor(Color.WHITE); canvas.drawRoundRect(new RectF(dp(11), dp(17), dp(37), dp(29)), dp(2), dp(2), paint);
-            paint.setColor(Color.rgb(177, 198, 195)); paint.setStrokeWidth(dp(1));
-            canvas.drawLine(dp(13), dp(20), dp(35), dp(20), paint); canvas.drawLine(dp(13), dp(23), dp(35), dp(23), paint); canvas.drawLine(dp(13), dp(26), dp(31), dp(26), paint);
-
-            // Pannello frontale rialzato con rientro superiore.
-            paint.setColor(Color.rgb(49, 199, 163)); paint.setShadowLayer(dp(2), 0, dp(1), Color.argb(70, 8, 66, 55));
-            path.reset(); path.moveTo(dp(7), dp(23)); path.quadTo(dp(7), dp(20), dp(11), dp(20));
-            path.lineTo(dp(29), dp(20)); path.quadTo(dp(32), dp(20), dp(34), dp(16));
-            path.quadTo(dp(35), dp(14), dp(38), dp(14)); path.lineTo(dp(41), dp(14));
-            path.quadTo(dp(43), dp(14), dp(42), dp(18)); path.lineTo(dp(40), dp(36));
-            path.quadTo(dp(40), dp(39), dp(37), dp(39)); path.lineTo(dp(10), dp(39));
-            path.quadTo(dp(7), dp(39), dp(7), dp(36)); path.close(); canvas.drawPath(path, paint); paint.clearShadowLayer();
+            path.lineTo(dp(20), dp(13)); path.lineTo(dp(24), dp(17)); path.lineTo(dp(37), dp(17));
+            path.quadTo(dp(40), dp(17), dp(40), dp(21)); path.lineTo(dp(40), dp(35));
+            path.quadTo(dp(40), dp(39), dp(36), dp(39)); path.lineTo(dp(12), dp(39));
+            path.quadTo(dp(8), dp(39), dp(8), dp(35)); path.close(); canvas.drawPath(path, paint);
         }
 
-        private void drawDocument(Canvas canvas, String label) {
-            paint.setStyle(Paint.Style.STROKE); canvas.drawRoundRect(new RectF(dp(13), dp(8), dp(35), dp(40)), dp(3), dp(3), paint);
-            paint.setStyle(Paint.Style.FILL); paint.setTypeface(bold); paint.setTextAlign(Paint.Align.CENTER); paint.setTextSize(dp(label.length() > 3 ? 7 : 8));
-            canvas.drawText(label, dp(24), dp(28), paint);
-        }
-
-        private void drawImage(Canvas canvas) {
-            paint.setStyle(Paint.Style.STROKE); canvas.drawRoundRect(new RectF(dp(9), dp(10), dp(39), dp(38)), dp(4), dp(4), paint);
-            paint.setStyle(Paint.Style.FILL); canvas.drawCircle(dp(31), dp(18), dp(3), paint);
-            path.reset(); path.moveTo(dp(12), dp(34)); path.lineTo(dp(21), dp(24)); path.lineTo(dp(27), dp(30)); path.lineTo(dp(31), dp(26)); path.lineTo(dp(37), dp(34)); path.close(); canvas.drawPath(path, paint);
-        }
-
-        private void drawSheet(Canvas canvas) {
-            paint.setStyle(Paint.Style.STROKE); canvas.drawRoundRect(new RectF(dp(10), dp(9), dp(38), dp(39)), dp(3), dp(3), paint);
-            canvas.drawLine(dp(19), dp(10), dp(19), dp(38), paint); canvas.drawLine(dp(29), dp(10), dp(29), dp(38), paint);
-            canvas.drawLine(dp(11), dp(19), dp(37), dp(19), paint); canvas.drawLine(dp(11), dp(29), dp(37), dp(29), paint);
+        private void drawLabel(Canvas canvas, String label) {
+            paint.setStyle(Paint.Style.FILL); paint.setTypeface(medium); paint.setTextAlign(Paint.Align.CENTER); paint.setTextSize(dp(label.length() > 3 ? 8 : 9));
+            Paint.FontMetrics metrics = paint.getFontMetrics();
+            canvas.drawText(label, getWidth() / 2f, getHeight() / 2f - (metrics.ascent + metrics.descent) / 2f, paint);
         }
     }
     interface Task<T> { T run() throws Exception; }
