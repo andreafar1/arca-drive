@@ -14,6 +14,7 @@ const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const STORAGE_DIR = process.env.STORAGE_DIR || '/data/files';
+const NAS_DIR = path.resolve(process.env.NAS_DIR || '/data/nas');
 const MAX_FILE_SIZE = Number(process.env.MAX_FILE_SIZE_MB || 200) * 1024 * 1024;
 const MAX_UPLOAD_CHUNK = Number(process.env.MAX_UPLOAD_CHUNK_MB || 10) * 1024 * 1024;
 const ACCESS_TOKEN_MINUTES = Number(process.env.ACCESS_TOKEN_MINUTES || 15);
@@ -226,6 +227,61 @@ function cleanName(value) {
   const name = String(value || '').trim().replace(/[\\/\0]/g, '_');
   if (!name || name.length > 255) throw new Error('Nome non valido');
   return name;
+}
+
+function nasRelative(value = '') {
+  const raw = String(value || '').replaceAll('\\', '/');
+  if (raw.includes('\0') || path.posix.isAbsolute(raw)) throw new Error('Percorso NAS non valido');
+  const normalized = path.posix.normalize(`/${raw}`).slice(1);
+  if (normalized === '..' || normalized.startsWith('../')) throw new Error('Percorso NAS non valido');
+  return normalized === '.' ? '' : normalized;
+}
+
+function isInside(root, target) {
+  return target === root || target.startsWith(`${root}${path.sep}`);
+}
+
+async function nasRoot() {
+  try {
+    const root = await fs.realpath(NAS_DIR);
+    const stat = await fs.stat(root);
+    if (!stat.isDirectory()) throw new Error();
+    return root;
+  } catch {
+    const error = new Error('NAS non disponibile: controlla il montaggio /data/nas');
+    error.status = 503;
+    throw error;
+  }
+}
+
+async function existingNasPath(value = '') {
+  const root = await nasRoot();
+  const relative = nasRelative(value);
+  const candidate = path.resolve(root, relative);
+  if (!isInside(root, candidate)) throw new Error('Percorso NAS non valido');
+  const real = await fs.realpath(candidate);
+  if (!isInside(root, real)) throw new Error('Percorso NAS non valido');
+  return { root, real, relative };
+}
+
+async function newNasPath(parentValue, nameValue) {
+  const parent = await existingNasPath(parentValue);
+  const name = cleanName(nameValue);
+  const target = path.join(parent.real, name);
+  if (!isInside(parent.root, target)) throw new Error('Percorso NAS non valido');
+  return { ...parent, name, target, childRelative: parent.relative ? `${parent.relative}/${name}` : name };
+}
+
+function nasMime(name) {
+  const extension = officeExtension(name);
+  return ({
+    pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+    webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml', txt: 'text/plain', csv: 'text/csv',
+    doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    mp4: 'video/mp4', mp3: 'audio/mpeg', zip: 'application/zip'
+  })[extension] || 'application/octet-stream';
 }
 
 async function ensureImagesFolder(userId, db = pool) {
@@ -917,6 +973,107 @@ app.post('/api/files', auth, writable, upload.array('files', 20), async (req, re
     res.status(400).json({ error: error.message });
   } finally {
     client.release();
+  }
+});
+
+app.get('/api/nas', auth, async (req, res) => {
+  try {
+    const location = await existingNasPath(req.query.path || '');
+    const query = String(req.query.q || '').trim().toLocaleLowerCase('it');
+    const children = await fs.readdir(location.real, { withFileTypes: true });
+    const entries = await Promise.all(children
+      .filter(item => !item.isSymbolicLink() && (!query || item.name.toLocaleLowerCase('it').includes(query)))
+      .map(async item => {
+        const relative = location.relative ? `${location.relative}/${item.name}` : item.name;
+        const stat = await fs.stat(path.join(location.real, item.name));
+        return {
+          id: relative,
+          parent_id: location.relative || null,
+          name: item.name,
+          kind: item.isDirectory() ? 'folder' : 'file',
+          mime_type: item.isDirectory() ? null : nasMime(item.name),
+          size_bytes: item.isDirectory() ? 0 : stat.size,
+          updated_at: stat.mtime,
+          owner_name: 'NAS',
+          is_system: false,
+          nas: true
+        };
+      }));
+    entries.sort((a, b) => a.kind === b.kind ? a.name.localeCompare(b.name, 'it', { sensitivity: 'base' }) : a.kind === 'folder' ? -1 : 1);
+    res.json(entries);
+  } catch (error) {
+    res.status(error.status || (error.code === 'ENOENT' ? 404 : 400)).json({ error: error.code === 'ENOENT' ? 'Cartella NAS non trovata' : error.message });
+  }
+});
+
+app.get('/api/nas/content', auth, async (req, res) => {
+  try {
+    const item = await existingNasPath(req.query.path || '');
+    const stat = await fs.stat(item.real);
+    if (!stat.isFile()) return res.status(400).json({ error: 'Il percorso NAS non è un file' });
+    res.setHeader('Content-Type', nasMime(path.basename(item.real)));
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(path.basename(item.real))}`);
+    res.sendFile(item.real);
+  } catch (error) {
+    res.status(error.status || (error.code === 'ENOENT' ? 404 : 400)).json({ error: error.code === 'ENOENT' ? 'File NAS non trovato' : error.message });
+  }
+});
+
+app.post('/api/nas/folders', auth, writable, async (req, res) => {
+  try {
+    const destination = await newNasPath(req.body.path || '', req.body.name);
+    await fs.mkdir(destination.target);
+    res.status(201).json({ id: destination.childRelative, name: destination.name, kind: 'folder', nas: true });
+  } catch (error) {
+    res.status(error.code === 'EEXIST' ? 409 : error.status || 400).json({ error: error.code === 'EEXIST' ? 'Esiste già un elemento con questo nome' : error.message });
+  }
+});
+
+app.post('/api/nas/files', auth, writable, upload.array('files', 20), async (req, res) => {
+  const temporaryFiles = req.files || [];
+  const createdPaths = [];
+  try {
+    const parent = await existingNasPath(req.body.path || '');
+    const created = [];
+    for (const file of temporaryFiles) {
+      const name = cleanName(Buffer.from(file.originalname, 'latin1').toString('utf8'));
+      const target = path.join(parent.real, name);
+      if (!isInside(parent.root, target)) throw new Error('Percorso NAS non valido');
+      await fs.copyFile(file.path, target, fs.constants.COPYFILE_EXCL);
+      createdPaths.push(target);
+      await fs.unlink(file.path);
+      created.push({ id: parent.relative ? `${parent.relative}/${name}` : name, name, kind: 'file', nas: true });
+    }
+    res.status(201).json(created);
+  } catch (error) {
+    await Promise.all(temporaryFiles.map(file => fs.unlink(file.path).catch(() => {})));
+    await Promise.all(createdPaths.map(target => fs.unlink(target).catch(() => {})));
+    res.status(error.code === 'EEXIST' ? 409 : error.status || 400).json({ error: error.code === 'EEXIST' ? 'Esiste già un file con questo nome' : error.message });
+  }
+});
+
+app.patch('/api/nas/rename', auth, writable, async (req, res) => {
+  try {
+    const source = await existingNasPath(req.body.path || '');
+    if (!source.relative) return res.status(400).json({ error: 'La cartella principale del NAS non può essere rinominata' });
+    const destination = await newNasPath(path.posix.dirname(source.relative) === '.' ? '' : path.posix.dirname(source.relative), req.body.name);
+    await fs.access(destination.target).then(() => { const conflict = new Error('Esiste già un elemento con questo nome'); conflict.code = 'EEXIST'; throw conflict; }).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    await fs.rename(source.real, destination.target);
+    res.json({ id: destination.childRelative, name: destination.name });
+  } catch (error) {
+    res.status(error.code === 'EEXIST' ? 409 : error.status || 400).json({ error: error.code === 'EEXIST' ? 'Esiste già un elemento con questo nome' : error.message });
+  }
+});
+
+app.delete('/api/nas', auth, writable, async (req, res) => {
+  try {
+    const item = await existingNasPath(req.query.path || '');
+    if (!item.relative) return res.status(400).json({ error: 'La cartella principale del NAS non può essere eliminata' });
+    await fs.rm(item.real, { recursive: true, force: false });
+    res.status(204).end();
+  } catch (error) {
+    res.status(error.status || (error.code === 'ENOENT' ? 404 : 400)).json({ error: error.code === 'ENOENT' ? 'Elemento NAS non trovato' : error.message });
   }
 });
 
