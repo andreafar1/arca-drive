@@ -95,10 +95,7 @@ final class ApiClient {
     }
 
     String ensurePhoneBackupFolder() throws Exception {
-        for (Entry folder : folders()) if (folder.parentId == null && "Backup telefono".equals(folder.name)) return folder.id;
-        createFolder("Backup telefono", null);
-        for (Entry folder : folders()) if (folder.parentId == null && "Backup telefono".equals(folder.name)) return folder.id;
-        throw new Exception("Impossibile preparare la cartella Backup telefono");
+        return request("POST", "/api/backup/folder", new JSONObject(), true, true).object().getString("id");
     }
 
     String ensureNasPhoneBackupFolder() throws Exception {
@@ -138,7 +135,19 @@ final class ApiClient {
         uploadToPath(resolver, uri, displayName, mime, parentPath, true, progress);
     }
 
+    void uploadBackup(ContentResolver resolver, Uri uri, String displayName, String mime, String parentId, long modified, Progress progress) throws Exception {
+        uploadToPath(resolver, uri, displayName, mime, parentId, false, modified, progress);
+    }
+
+    void uploadNasBackup(ContentResolver resolver, Uri uri, String displayName, String mime, String parentPath, long modified, Progress progress) throws Exception {
+        uploadToPath(resolver, uri, displayName, mime, parentPath, true, modified, progress);
+    }
+
     private void uploadToPath(ContentResolver resolver, Uri uri, String displayName, String mime, String parentId, boolean nas, Progress progress) throws Exception {
+        uploadToPath(resolver, uri, displayName, mime, parentId, nas, 0, progress);
+    }
+
+    private void uploadToPath(ContentResolver resolver, Uri uri, String displayName, String mime, String parentId, boolean nas, long modified, Progress progress) throws Exception {
         String boundary = "ArcaDrive" + System.currentTimeMillis();
         HttpURLConnection connection = open("POST", nas ? "/api/nas/files" : "/api/files", true);
         connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
@@ -147,6 +156,7 @@ final class ApiClient {
         try (OutputStream out = connection.getOutputStream(); InputStream in = resolver.openInputStream(uri)) {
             if (nas) part(out, boundary, "path", parentId == null ? "" : parentId);
             else if (parentId != null) part(out, boundary, "parentId", parentId);
+            if (modified > 0) part(out, boundary, "sourceModifiedAt", Long.toString(modified));
             write(out, "--" + boundary + "\r\nContent-Disposition: form-data; name=\"files\"; filename=\"" + displayName.replace("\"", "") + "\"\r\nContent-Type: " + mime + "\r\n\r\n");
             byte[] buffer = new byte[128 * 1024]; int read; long sent = 0;
             while ((read = in.read(buffer)) >= 0) { out.write(buffer, 0, read); sent += read; progress.sent(sent); }
