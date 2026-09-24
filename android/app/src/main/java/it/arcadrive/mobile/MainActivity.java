@@ -71,6 +71,7 @@ public final class MainActivity extends Activity {
     private final Typeface bold = Typeface.create("sans-serif", Typeface.BOLD);
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final ExecutorService pdfIo = Executors.newSingleThreadExecutor();
+    private final ExecutorService thumbnailIo = Executors.newFixedThreadPool(3);
     private final Object pdfLock = new Object();
     private final LruCache<Integer, Bitmap> pdfPageCache = new LruCache<Integer, Bitmap>(48 * 1024 * 1024) {
         @Override protected int sizeOf(Integer key, Bitmap bitmap) { return bitmap.getAllocationByteCount(); }
@@ -295,9 +296,8 @@ public final class MainActivity extends Activity {
                     Entry entry = getItem(position);
                     LinearLayout row = new LinearLayout(MainActivity.this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(16), dp(13), dp(16), dp(13));
                     row.setBackground(new InsetDrawable(rounded(Color.WHITE, LINE, 13), 0, dp(4), 0, dp(4)));
-                    FileBadgeView badge = new FileBadgeView(entry);
-                    badge.setElevation(dp(1));
-                    row.addView(badge, new LinearLayout.LayoutParams(dp(48), dp(48)));
+                    View badge = entry.mime.startsWith("image/") ? thumbnailBadge(entry) : new FileBadgeView(entry);
+                    badge.setElevation(dp(1)); row.addView(badge, new LinearLayout.LayoutParams(dp(48), dp(48)));
                     LinearLayout labels = new LinearLayout(MainActivity.this); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(13), 0, 0, 0);
                     TextView name = text(entry.name, 15); name.setTypeface(medium); name.setMaxLines(2); labels.addView(name);
                     TextView detail = text(entry.folder() ? "Cartella" : formatSize(entry.size), 13); detail.setTextColor(Color.rgb(112, 124, 143)); detail.setPadding(0, dp(3), 0, 0); labels.addView(detail);
@@ -318,6 +318,30 @@ public final class MainActivity extends Activity {
             if (currentFolder != null) folderStack.push(currentFolder);
             currentFolder = entry; title.setText(entry.name); back.setText("←"); search.setText(""); loadEntries();
         } else preview(entry);
+    }
+
+    private View thumbnailBadge(Entry entry) {
+        FrameLayout holder = new FrameLayout(this);
+        FileBadgeView placeholder = new FileBadgeView(entry); holder.addView(placeholder, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        ImageView thumbnail = new ImageView(this); thumbnail.setScaleType(ImageView.ScaleType.CENTER_CROP); thumbnail.setBackground(rounded(Color.rgb(238, 234, 255), Color.TRANSPARENT, 11)); thumbnail.setClipToOutline(true); thumbnail.setVisibility(View.INVISIBLE); thumbnail.setContentDescription("Miniatura " + entry.name);
+        holder.addView(thumbnail, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        String cacheKey = Integer.toHexString((entry.id + ":" + entry.updatedAt).hashCode()); thumbnail.setTag(cacheKey);
+        File directory = new File(getCacheDir(), "thumbnails"); directory.mkdirs(); File cached = new File(directory, cacheKey + ".webp");
+        thumbnailIo.execute(() -> {
+            File temporary = new File(directory, cacheKey + "-" + System.nanoTime() + ".part");
+            try {
+                if (!cached.isFile()) {
+                    api.downloadThumbnail(entry, temporary);
+                    if (!cached.isFile() && !temporary.renameTo(cached)) throw new Exception("Cache miniatura non disponibile");
+                    temporary.delete();
+                }
+                Bitmap bitmap = decodeSampled(cached, dp(192));
+                runOnUiThread(() -> {
+                    if (cacheKey.equals(thumbnail.getTag()) && bitmap != null) { thumbnail.setImageBitmap(bitmap); thumbnail.setVisibility(View.VISIBLE); }
+                });
+            } catch (Exception ignored) { temporary.delete(); }
+        });
+        return holder;
     }
 
     private void preview(Entry entry) {
