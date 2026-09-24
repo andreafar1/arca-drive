@@ -9,6 +9,7 @@ import android.provider.DocumentsContract;
 
 import androidx.annotation.NonNull;
 import androidx.work.Constraints;
+import androidx.work.BackoffPolicy;
 import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.NetworkType;
@@ -43,13 +44,16 @@ public final class PhotoBackupWorker extends Worker {
             .setRequiresCharging(chargingOnly)
             .build();
         PeriodicWorkRequest work = new PeriodicWorkRequest.Builder(PhotoBackupWorker.class, frequencyMinutes, TimeUnit.MINUTES)
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS)
             .setConstraints(constraints).build();
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(PERIODIC_NAME, ExistingPeriodicWorkPolicy.UPDATE, work);
     }
 
     static void runNow(Context context) {
         Constraints constraints = new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
-        OneTimeWorkRequest work = new OneTimeWorkRequest.Builder(PhotoBackupWorker.class).setConstraints(constraints).build();
+        OneTimeWorkRequest work = new OneTimeWorkRequest.Builder(PhotoBackupWorker.class)
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS)
+            .setConstraints(constraints).build();
         WorkManager.getInstance(context).enqueueUniqueWork(MANUAL_NAME, ExistingWorkPolicy.REPLACE, work);
     }
 
@@ -71,11 +75,20 @@ public final class PhotoBackupWorker extends Worker {
             ApiClient api = new ApiClient(secure, server, BuildConfig.ALLOW_LOCAL_HTTP);
             boolean nasDestination = "nas".equals(settings.getString("backup_destination", "drive"));
             String destination = nasDestination ? api.ensureNasPhoneBackupFolder() : api.ensurePhoneBackupFolder();
-            int uploaded = scanAndUpload(Uri.parse(treeValue), destination, nasDestination, api, settings);
-            settings.edit().putLong("backup_last_time", System.currentTimeMillis())
-                .putString("backup_last_status", uploaded == 0 ? "Nessuna nuova foto" : uploaded + " nuove foto caricate")
-                .apply();
-            return uploaded >= MAX_FILES_PER_RUN ? Result.retry() : Result.success();
+            boolean initial = !settings.getBoolean("backup_initial_complete", false);
+            ScanResult scan = scanAndUpload(Uri.parse(treeValue), destination, nasDestination, api, settings);
+            SharedPreferences.Editor update = settings.edit().putLong("backup_last_time", System.currentTimeMillis());
+            if (initial) {
+                int total = settings.getInt("backup_initial_uploaded", 0) + scan.uploaded;
+                update.putInt("backup_initial_uploaded", total);
+                if (scan.limitReached) update.putString("backup_last_status", "Backup iniziale in corso: " + total + " file caricati");
+                else update.putBoolean("backup_initial_complete", true)
+                    .putString("backup_last_status", "Backup iniziale completato: " + total + " file caricati");
+            } else {
+                update.putString("backup_last_status", scan.uploaded == 0 ? "Backup aggiornato: nessun nuovo file" : scan.uploaded + " nuovi file caricati");
+            }
+            update.apply();
+            return scan.limitReached ? Result.retry() : Result.success();
         } catch (SecurityException error) {
             return finish(settings, "Autorizzazione alla cartella non più valida", 0, false);
         } catch (Exception error) {
@@ -85,7 +98,7 @@ public final class PhotoBackupWorker extends Worker {
         }
     }
 
-    private int scanAndUpload(Uri treeUri, String destination, boolean nasDestination, ApiClient api, SharedPreferences settings) throws Exception {
+    private ScanResult scanAndUpload(Uri treeUri, String destination, boolean nasDestination, ApiClient api, SharedPreferences settings) throws Exception {
         ContentResolver resolver = getApplicationContext().getContentResolver();
         Deque<String> directories = new ArrayDeque<>();
         directories.add(DocumentsContract.getTreeDocumentId(treeUri));
@@ -124,7 +137,13 @@ public final class PhotoBackupWorker extends Worker {
                 }
             }
         }
-        return uploaded;
+        return new ScanResult(uploaded, uploaded >= MAX_FILES_PER_RUN);
+    }
+
+    private static final class ScanResult {
+        final int uploaded;
+        final boolean limitReached;
+        ScanResult(int uploaded, boolean limitReached) { this.uploaded = uploaded; this.limitReached = limitReached; }
     }
 
     private static String digest(String value) throws Exception {
