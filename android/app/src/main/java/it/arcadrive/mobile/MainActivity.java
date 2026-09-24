@@ -516,7 +516,10 @@ public final class MainActivity extends Activity {
             android.content.SharedPreferences backupSettings = getSharedPreferences(PhotoBackupWorker.SETTINGS, MODE_PRIVATE);
             android.content.SharedPreferences.Editor backupEditor = backupSettings.edit()
                 .putString("backup_tree_uri", tree.toString()).putString("backup_source_name", DocumentsContract.getTreeDocumentId(tree))
-                .putBoolean("backup_enabled", true).putString("backup_last_status", "Backup configurato");
+                .putBoolean("backup_enabled", true)
+                .putBoolean("backup_initial_complete", false)
+                .putInt("backup_initial_uploaded", 0)
+                .putString("backup_last_status", "Preparazione del backup iniziale completo");
             if (!backupSettings.contains("backup_wifi_only")) backupEditor.putBoolean("backup_wifi_only", true);
             if (!backupSettings.contains("backup_frequency_minutes")) backupEditor.putLong("backup_frequency_minutes", 360);
             if (!backupSettings.contains("backup_max_bytes")) backupEditor.putLong("backup_max_bytes", 200L * 1024 * 1024);
