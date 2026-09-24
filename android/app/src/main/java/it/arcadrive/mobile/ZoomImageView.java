@@ -1,12 +1,14 @@
 package it.arcadrive.mobile;
 
 import android.content.Context;
+import android.animation.ValueAnimator;
 import android.graphics.Matrix;
 import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.ImageView;
 
 /** ImageView con zoom e trascinamento, senza dipendenze esterne. */
@@ -16,11 +18,9 @@ public final class ZoomImageView extends ImageView {
     private static final float MIN_SCALE = 1f;
     private static final float MAX_SCALE = 5f;
     private final Matrix imageMatrix = new Matrix();
-    private final float[] matrixValues = new float[9];
     private final ScaleGestureDetector scaleDetector;
     private final GestureDetector gestureDetector;
     private float scale = MIN_SCALE;
-    private float baseScale = 1f;
     private float lastX;
     private float lastY;
     private boolean dragging;
@@ -50,8 +50,7 @@ public final class ZoomImageView extends ImageView {
             @Override public boolean onDown(MotionEvent event) { return true; }
 
             @Override public boolean onDoubleTap(MotionEvent event) {
-                if (scale > MIN_SCALE + .05f) resetZoom();
-                else zoomTo(2.5f, event.getX(), event.getY());
+                animateZoom(scale > MIN_SCALE + .05f ? MIN_SCALE : 2.5f, event.getX(), event.getY());
                 return true;
             }
 
@@ -98,6 +97,11 @@ public final class ZoomImageView extends ImageView {
                 if (!scaleDetector.isInProgress() && isZoomed()) {
                     float dx = event.getX() - lastX;
                     float dy = event.getY() - lastY;
+                    if (shouldReleaseVerticalGesture(dx, dy)) {
+                        getParent().requestDisallowInterceptTouchEvent(false);
+                        lastX = event.getX(); lastY = event.getY();
+                        break;
+                    }
                     if (Math.abs(dx) > 1f || Math.abs(dy) > 1f) dragging = true;
                     imageMatrix.postTranslate(dx, dy);
                     constrainTranslation();
@@ -123,20 +127,39 @@ public final class ZoomImageView extends ImageView {
         Drawable drawable = getDrawable();
         if (drawable == null || getWidth() == 0 || getHeight() == 0 || drawable.getIntrinsicWidth() <= 0 || drawable.getIntrinsicHeight() <= 0) return;
         float fit = Math.min(getWidth() / (float) drawable.getIntrinsicWidth(), getHeight() / (float) drawable.getIntrinsicHeight());
-        baseScale = fit;
         float dx = (getWidth() - drawable.getIntrinsicWidth() * fit) / 2f;
         float dy = (getHeight() - drawable.getIntrinsicHeight() * fit) / 2f;
         imageMatrix.reset(); imageMatrix.postScale(fit, fit); imageMatrix.postTranslate(dx, dy);
         scale = MIN_SCALE; setImageMatrix(imageMatrix);
     }
 
-    private void resetZoom() { configureBaseMatrix(); }
-
     private void zoomTo(float target, float focusX, float focusY) {
         target = clamp(target, MIN_SCALE, MAX_SCALE);
         float factor = target / scale; scale = target;
         imageMatrix.postScale(factor, factor, focusX, focusY);
         constrainTranslation(); setImageMatrix(imageMatrix);
+    }
+
+    private void animateZoom(float target, float focusX, float focusY) {
+        final float start = scale;
+        ValueAnimator animator = ValueAnimator.ofFloat(start, clamp(target, MIN_SCALE, MAX_SCALE));
+        animator.setDuration(220);
+        animator.setInterpolator(new DecelerateInterpolator());
+        animator.addUpdateListener(animation -> {
+            float next = (float) animation.getAnimatedValue();
+            float factor = next / scale;
+            scale = next;
+            imageMatrix.postScale(factor, factor, focusX, focusY);
+            constrainTranslation(); setImageMatrix(imageMatrix);
+        });
+        animator.start();
+    }
+
+    private boolean shouldReleaseVerticalGesture(float dx, float dy) {
+        if (Math.abs(dy) < Math.abs(dx) * 1.15f) return false;
+        Drawable drawable = getDrawable(); if (drawable == null) return true;
+        RectF bounds = new RectF(0, 0, drawable.getIntrinsicWidth(), drawable.getIntrinsicHeight()); imageMatrix.mapRect(bounds);
+        return (dy > 0 && bounds.top >= -1f) || (dy < 0 && bounds.bottom <= getHeight() + 1f);
     }
 
     private void constrainTranslation() {
