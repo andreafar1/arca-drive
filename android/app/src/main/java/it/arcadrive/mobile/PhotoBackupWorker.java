@@ -142,8 +142,8 @@ public final class PhotoBackupWorker extends Worker {
                     }
                     Uri document = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
                     String uploadName = name == null || name.isBlank() ? "media-" + System.currentTimeMillis() : name;
-                    if (nasDestination) api.uploadNas(resolver, document, uploadName, mime, destination, sent -> {});
-                    else api.upload(resolver, document, uploadName, mime, destination, sent -> {});
+                    if (nasDestination) api.uploadNasBackup(resolver, document, uploadName, mime, destination, modified, sent -> {});
+                    else api.uploadBackup(resolver, document, uploadName, mime, destination, modified, sent -> {});
                     uploaded++;
                     completed++;
                     settings.edit().putBoolean(key, true)
