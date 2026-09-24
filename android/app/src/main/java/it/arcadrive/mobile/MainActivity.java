@@ -43,6 +43,7 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
@@ -87,6 +88,7 @@ public final class MainActivity extends Activity {
     private final ExecutorService thumbnailIo = Executors.newFixedThreadPool(3);
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
     private Runnable pendingSearch;
+    private Runnable backupProgressUpdater;
     private final Object pdfLock = new Object();
     private final LruCache<Integer, Bitmap> pdfPageCache = new LruCache<Integer, Bitmap>(48 * 1024 * 1024) {
         @Override protected int sizeOf(Integer key, Bitmap bitmap) { return bitmap.getAllocationByteCount(); }
@@ -327,7 +329,9 @@ public final class MainActivity extends Activity {
                     badge.setElevation(dp(1)); row.addView(badge, new LinearLayout.LayoutParams(dp(48), dp(48)));
                     LinearLayout labels = new LinearLayout(MainActivity.this); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(13), 0, 0, 0);
                     TextView name = text(entry.name, 15); name.setTypeface(medium); name.setMaxLines(2); labels.addView(name);
-                    TextView detail = text(entry.folder() ? "Cartella" : formatSize(entry.size), 13); detail.setTextColor(Color.rgb(112, 124, 143)); detail.setPadding(0, dp(3), 0, 0); labels.addView(detail);
+                    String detailText = entry.folder() ? "Cartella" : formatSize(entry.size);
+                    if (entry.mime.startsWith("image/") && !entry.updatedAt.isBlank()) detailText += "  ·  " + formatEntryDate(entry.updatedAt);
+                    TextView detail = text(detailText, 13); detail.setTextColor(Color.rgb(112, 124, 143)); detail.setPadding(0, dp(3), 0, 0); labels.addView(detail);
                     row.addView(labels, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
                     Button actions = new Button(MainActivity.this); actions.setText("⋮"); actions.setTextSize(21); actions.setTextColor(Color.rgb(91, 104, 125)); actions.setMinWidth(0); actions.setMinimumWidth(0); actions.setPadding(0, 0, 0, 0); actions.setBackground(rounded(Color.TRANSPARENT, Color.TRANSPARENT, 10)); actions.setContentDescription("Azioni per " + entry.name); actions.setOnClickListener(v -> entryMenu(entry));
                     row.addView(actions, new LinearLayout.LayoutParams(dp(42), dp(42)));
@@ -519,6 +523,8 @@ public final class MainActivity extends Activity {
                 .putBoolean("backup_enabled", true)
                 .putBoolean("backup_initial_complete", false)
                 .putInt("backup_initial_uploaded", 0)
+                .putInt("backup_source_total", 0)
+                .putInt("backup_uploaded_total", 0)
                 .putString("backup_last_status", "Preparazione del backup iniziale completo");
             if (!backupSettings.contains("backup_wifi_only")) backupEditor.putBoolean("backup_wifi_only", true);
             if (!backupSettings.contains("backup_frequency_minutes")) backupEditor.putLong("backup_frequency_minutes", 360);
@@ -659,6 +665,21 @@ public final class MainActivity extends Activity {
         String last = settings.getString("backup_last_status", enabled ? "In attesa del primo backup" : "Scegli una cartella per iniziare"); long lastTime = settings.getLong("backup_last_time", 0);
         TextView status = text(last + (lastTime > 0 ? "\n" + new SimpleDateFormat("dd MMM yyyy · HH:mm", Locale.ITALIAN).format(new Date(lastTime)) : ""), 13); status.setTextColor(Color.rgb(91, 104, 125)); status.setPadding(0, dp(6), 0, dp(18)); body.addView(status);
 
+        TextView counter = text("", 15); counter.setTypeface(medium); counter.setTextColor(NAVY); body.addView(counter);
+        ProgressBar backupBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); backupBar.setMax(1000); body.addView(backupBar, spaced());
+        if (backupProgressUpdater != null) uiHandler.removeCallbacks(backupProgressUpdater);
+        backupProgressUpdater = new Runnable() {
+            @Override public void run() {
+                if (!backupSettingsOpen) return;
+                int total = settings.getInt("backup_source_total", 0);
+                int completed = settings.getInt("backup_uploaded_total", 0);
+                counter.setText(total > 0 ? "Foto caricate: " + completed + " di " + total : enabled ? "Conteggio delle foto in corso…" : "Nessuna cartella selezionata");
+                backupBar.setProgress(total > 0 ? Math.min(1000, (int) ((completed * 1000L) / total)) : 0);
+                uiHandler.postDelayed(this, 750);
+            }
+        };
+        backupProgressUpdater.run();
+
         TextView sourceLabel = text("CARTELLA DEL TELEFONO", 11); sourceLabel.setTypeface(bold); sourceLabel.setTextColor(Color.rgb(112, 124, 143)); body.addView(sourceLabel);
         Button source = secondary(settings.getString("backup_source_name", "Scegli la cartella delle foto")); body.addView(source, spaced()); source.setOnClickListener(v -> chooseBackupFolder());
 
@@ -700,6 +721,13 @@ public final class MainActivity extends Activity {
 
     private Switch backupSwitch(String label, boolean checked) { Switch control = new Switch(this); control.setText(label); control.setTextSize(15); control.setTypeface(regular); control.setTextColor(NAVY); control.setGravity(Gravity.CENTER_VERTICAL); control.setPadding(dp(12), 0, dp(8), 0); control.setBackground(rounded(Color.WHITE, LINE, 12)); control.setChecked(checked); return control; }
     private String frequencyLabel(long minutes) { return minutes <= 15 ? "15 minuti" : minutes <= 60 ? "1 ora" : minutes <= 360 ? "6 ore" : "24 ore"; }
+
+    private String formatEntryDate(String value) {
+        try {
+            String[] parts = value.substring(0, 10).split("-");
+            return parts[2] + "/" + parts[1] + "/" + parts[0];
+        } catch (Exception ignored) { return value; }
+    }
 
     private void appearanceMenu() {
         String[] choices = {"Originale", "Verde acqua chiaro", "Azzurro chiaro", "Grigio caldo", "Scegli una foto…"};
