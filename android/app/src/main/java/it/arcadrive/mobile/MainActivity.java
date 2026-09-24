@@ -40,6 +40,7 @@ import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.GridView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ImageView;
@@ -104,6 +105,7 @@ public final class MainActivity extends Activity {
     private TextView title;
     private EditText search;
     private ListView list;
+    private GridView imageGrid;
     private Button back;
     private Button navFiles;
     private Button navImages;
@@ -231,7 +233,10 @@ public final class MainActivity extends Activity {
         search.setBackground(rounded(Color.WHITE, LINE, 14));
         LinearLayout searchRow = new LinearLayout(this); searchRow.setGravity(Gravity.CENTER_VERTICAL); searchRow.setPadding(dp(16), dp(16), dp(16), dp(8)); searchRow.addView(search, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))); root.addView(searchRow);
 
-        list = new ListView(this); list.setDivider(new android.graphics.drawable.ColorDrawable(LINE)); list.setDividerHeight(dp(1)); list.setPadding(dp(16), dp(4), dp(16), dp(6)); list.setClipToPadding(false); list.setBackgroundColor(Color.TRANSPARENT); root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        FrameLayout results = new FrameLayout(this);
+        list = new ListView(this); list.setDivider(new android.graphics.drawable.ColorDrawable(LINE)); list.setDividerHeight(dp(1)); list.setPadding(dp(16), dp(4), dp(16), dp(6)); list.setClipToPadding(false); list.setBackgroundColor(Color.TRANSPARENT); results.addView(list, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        imageGrid = new GridView(this); imageGrid.setNumColumns(2); imageGrid.setHorizontalSpacing(dp(10)); imageGrid.setVerticalSpacing(dp(14)); imageGrid.setPadding(dp(16), dp(8), dp(16), dp(16)); imageGrid.setClipToPadding(false); imageGrid.setBackgroundColor(Color.TRANSPARENT); imageGrid.setVisibility(View.GONE); results.addView(imageGrid, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(results, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         LinearLayout nav = new LinearLayout(this); nav.setGravity(Gravity.CENTER); nav.setPadding(dp(10), dp(8), dp(10), dp(8)); nav.setBackgroundColor(Color.WHITE); nav.setElevation(dp(3));
         navFiles = navButton("▦  File"); navImages = navButton("▧  Immagini"); navTrash = navButton("♲  Cestino");
         nav.addView(navFiles, weighted()); nav.addView(navImages, weighted()); nav.addView(navTrash, weighted()); root.addView(nav);
@@ -260,6 +265,8 @@ public final class MainActivity extends Activity {
         navFiles.setOnClickListener(v -> switchView("files")); navImages.setOnClickListener(v -> switchView("images")); navTrash.setOnClickListener(v -> switchView("trash"));
         list.setOnItemClickListener((parent, row, position, id) -> openEntry(currentEntries.get(position)));
         list.setOnItemLongClickListener((parent, row, position, id) -> { entryMenu(currentEntries.get(position)); return true; });
+        imageGrid.setOnItemClickListener((parent, row, position, id) -> openEntry(currentEntries.get(position)));
+        imageGrid.setOnItemLongClickListener((parent, row, position, id) -> { entryMenu(currentEntries.get(position)); return true; });
         updateNavState();
         loadEntries();
     }
@@ -320,6 +327,31 @@ public final class MainActivity extends Activity {
         String parentId = currentFolder == null ? null : currentFolder.id;
         async(() -> api.entries(parentId, view, search == null ? "" : search.getText().toString()), entries -> {
             stopBusy(); currentEntries = entries;
+            boolean gallery = "images".equals(view);
+            imageGrid.setVisibility(gallery ? View.VISIBLE : View.GONE);
+            list.setVisibility(gallery ? View.GONE : View.VISIBLE);
+            if (gallery) {
+                imageGrid.setAdapter(new ArrayAdapter<Entry>(this, android.R.layout.simple_list_item_1, entries) {
+                    @Override public View getView(int position, View convert, ViewGroup parent) {
+                        Entry entry = getItem(position);
+                        LinearLayout tile = new LinearLayout(MainActivity.this); tile.setOrientation(LinearLayout.VERTICAL);
+                        FrameLayout photo = new FrameLayout(MainActivity.this);
+                        View thumbnail = thumbnailBadge(entry, dp(360));
+                        photo.addView(thumbnail, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                        Button actions = new Button(MainActivity.this); actions.setText("⋮"); actions.setTextSize(20); actions.setTextColor(NAVY); actions.setMinWidth(0); actions.setMinimumWidth(0); actions.setPadding(0, 0, 0, 0); actions.setBackground(rounded(Color.WHITE, Color.TRANSPARENT, 20)); actions.setContentDescription("Azioni per " + entry.name);
+                        actions.setFocusable(false);
+                        FrameLayout.LayoutParams actionParams = new FrameLayout.LayoutParams(dp(40), dp(40), Gravity.TOP | Gravity.END); actionParams.setMargins(0, dp(7), dp(7), 0);
+                        photo.addView(actions, actionParams); actions.setOnClickListener(v -> entryMenu(entry));
+                        tile.addView(photo, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(168)));
+                        TextView name = text(entry.name, 13); name.setTypeface(medium); name.setSingleLine(); name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE); name.setPadding(dp(2), dp(7), dp(2), 0); tile.addView(name);
+                        if (!entry.displayDate.isBlank()) { TextView date = text(formatEntryDate(entry.displayDate), 12); date.setTextColor(Color.rgb(105, 117, 136)); date.setPadding(dp(2), dp(3), 0, 0); tile.addView(date); }
+                        tile.setOnClickListener(v -> openEntry(entry));
+                        tile.setOnLongClickListener(v -> { entryMenu(entry); return true; });
+                        return tile;
+                    }
+                });
+                return;
+            }
             list.setAdapter(new ArrayAdapter<Entry>(this, android.R.layout.simple_list_item_2, android.R.id.text1, entries) {
                 @Override public View getView(int position, View convert, ViewGroup parent) {
                     Entry entry = getItem(position);
@@ -352,6 +384,10 @@ public final class MainActivity extends Activity {
     }
 
     private View thumbnailBadge(Entry entry) {
+        return thumbnailBadge(entry, dp(192));
+    }
+
+    private View thumbnailBadge(Entry entry, int targetSize) {
         FrameLayout holder = new FrameLayout(this);
         FileBadgeView placeholder = new FileBadgeView(entry); holder.addView(placeholder, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         ImageView thumbnail = new ImageView(this); thumbnail.setScaleType(ImageView.ScaleType.CENTER_CROP); thumbnail.setBackground(rounded(Color.rgb(238, 234, 255), Color.TRANSPARENT, 11)); thumbnail.setClipToOutline(true); thumbnail.setVisibility(View.INVISIBLE); thumbnail.setContentDescription("Miniatura " + entry.name);
@@ -366,7 +402,7 @@ public final class MainActivity extends Activity {
                     if (!cached.isFile() && !temporary.renameTo(cached)) throw new Exception("Cache miniatura non disponibile");
                     temporary.delete();
                 }
-                Bitmap bitmap = decodeSampled(cached, dp(192));
+                Bitmap bitmap = decodeSampled(cached, targetSize);
                 runOnUiThread(() -> {
                     if (cacheKey.equals(thumbnail.getTag()) && bitmap != null) { thumbnail.setImageBitmap(bitmap); thumbnail.setVisibility(View.VISIBLE); }
                 });
