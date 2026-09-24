@@ -72,6 +72,7 @@ import java.util.concurrent.Executors;
 public final class MainActivity extends Activity {
     private static final int PICK_FILE = 40;
     private static final int PICK_BACKGROUND = 41;
+    private static final int PICK_BACKUP_FOLDER = 42;
     private static final int NAVY = Color.rgb(16, 26, 48);
     private static final int MINT = Color.rgb(49, 199, 163);
     private static final int PAGE = Color.rgb(246, 248, 251);
@@ -126,8 +127,10 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         secure = new SecureStore(this);
-        server = getPreferences(MODE_PRIVATE).getString("server", "");
+        server = getSharedPreferences(PhotoBackupWorker.SETTINGS, MODE_PRIVATE).getString("server", getPreferences(MODE_PRIVATE).getString("server", ""));
+        if (!server.isBlank()) getSharedPreferences(PhotoBackupWorker.SETTINGS, MODE_PRIVATE).edit().putString("server", server).apply();
         api = new ApiClient(secure, server, BuildConfig.ALLOW_LOCAL_HTTP);
+        if (getSharedPreferences(PhotoBackupWorker.SETTINGS, MODE_PRIVATE).getBoolean("backup_enabled", false)) PhotoBackupWorker.schedule(this);
         if (server.isBlank()) showServerSetup();
         else if (secure.get("access") == null) showLogin();
         else validateSession();
@@ -151,6 +154,7 @@ public final class MainActivity extends Activity {
             if (!allowed) { toast(BuildConfig.ALLOW_LOCAL_HTTP ? "Usa HTTPS oppure un IP HTTP della rete locale" : "Inserisci un indirizzo https:// valido"); return; }
             server = candidate;
             getPreferences(MODE_PRIVATE).edit().putString("server", server).apply();
+            getSharedPreferences(PhotoBackupWorker.SETTINGS, MODE_PRIVATE).edit().putString("server", server).apply();
             api.setBaseUrl(server);
             showLogin();
         });
@@ -486,6 +490,12 @@ public final class MainActivity extends Activity {
         startActivityForResult(intent, PICK_BACKGROUND);
     }
 
+    private void chooseBackupFolder() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        startActivityForResult(intent, PICK_BACKUP_FOLDER);
+    }
+
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
@@ -494,6 +504,16 @@ public final class MainActivity extends Activity {
             try { getContentResolver().takePersistableUriPermission(background, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) {}
             getPreferences(MODE_PRIVATE).edit().putString("background_style", "image").putString("background_uri", background.toString()).apply();
             toast("Sfondo applicato"); showDrive(); return;
+        }
+        if (requestCode == PICK_BACKUP_FOLDER) {
+            Uri tree = data.getData();
+            try { getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+            catch (Exception error) { toast("Impossibile conservare l’accesso alla cartella"); return; }
+            getSharedPreferences(PhotoBackupWorker.SETTINGS, MODE_PRIVATE).edit()
+                .putString("backup_tree_uri", tree.toString()).putBoolean("backup_enabled", true).putBoolean("backup_wifi_only", true)
+                .putString("backup_last_status", "Backup configurato").apply();
+            PhotoBackupWorker.schedule(this); PhotoBackupWorker.runNow(this);
+            toast("Backup foto attivato"); return;
         }
         if (requestCode != PICK_FILE) return;
         Uri uri = data.getData(); String[] metadata = fileMetadata(uri);
@@ -602,11 +622,34 @@ public final class MainActivity extends Activity {
     }
 
     private void accountMenu() {
-        new AlertDialog.Builder(this).setTitle("Account").setItems(new String[]{"Aggiorna", "Aspetto e sfondo", "Cambia server", "Esci"}, (d, which) -> {
+        new AlertDialog.Builder(this).setTitle("Account").setItems(new String[]{"Aggiorna", "Backup foto", "Aspetto e sfondo", "Cambia server", "Esci"}, (d, which) -> {
             if (which == 0) loadEntries();
-            if (which == 1) appearanceMenu();
-            if (which == 2) { api.logout(); showServerSetup(); }
-            if (which == 3) { api.logout(); showLogin(); }
+            if (which == 1) photoBackupMenu();
+            if (which == 2) appearanceMenu();
+            if (which == 3) { api.logout(); showServerSetup(); }
+            if (which == 4) { api.logout(); showLogin(); }
+        }).show();
+    }
+
+    private void photoBackupMenu() {
+        android.content.SharedPreferences settings = getSharedPreferences(PhotoBackupWorker.SETTINGS, MODE_PRIVATE);
+        boolean enabled = settings.getBoolean("backup_enabled", false);
+        boolean wifiOnly = settings.getBoolean("backup_wifi_only", true);
+        String last = settings.getString("backup_last_status", enabled ? "In attesa del primo backup" : "Non configurato");
+        long lastTime = settings.getLong("backup_last_time", 0);
+        String detail = last + (lastTime > 0 ? "\nUltimo tentativo: " + new SimpleDateFormat("dd MMM yyyy · HH:mm", Locale.ITALIAN).format(new Date(lastTime)) : "") + "\nDestinazione: I miei file / Backup telefono";
+        String[] choices = enabled
+            ? new String[]{"Stato: " + detail, "Avvia backup ora", wifiOnly ? "Solo Wi-Fi: attivo" : "Solo Wi-Fi: disattivato", "Cambia cartella del telefono", "Disattiva backup"}
+            : new String[]{"Scegli la cartella delle foto"};
+        new AlertDialog.Builder(this).setTitle("Backup foto").setItems(choices, (dialog, which) -> {
+            if (!enabled) { chooseBackupFolder(); return; }
+            if (which == 1) { PhotoBackupWorker.runNow(this); toast("Backup avviato in background"); }
+            else if (which == 2) {
+                settings.edit().putBoolean("backup_wifi_only", !wifiOnly).apply(); PhotoBackupWorker.schedule(this); photoBackupMenu();
+            } else if (which == 3) chooseBackupFolder();
+            else if (which == 4) {
+                settings.edit().putBoolean("backup_enabled", false).apply(); PhotoBackupWorker.disable(this); toast("Backup foto disattivato");
+            }
         }).show();
     }
 
