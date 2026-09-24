@@ -12,6 +12,7 @@ final class Entry {
     final boolean system;
     final boolean nas;
     final String updatedAt;
+    final String displayDate;
 
     Entry(JSONObject json) {
         id = json.optString("id");
@@ -23,6 +24,7 @@ final class Entry {
         system = json.optBoolean("is_system", false);
         nas = json.optBoolean("nas", false);
         updatedAt = json.optString("updated_at", "");
+        displayDate = json.optString("display_date", updatedAt);
     }
 
     boolean folder() { return "folder".equals(kind); }
