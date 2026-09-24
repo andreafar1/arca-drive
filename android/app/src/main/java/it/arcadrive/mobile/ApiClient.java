@@ -94,6 +94,13 @@ final class ApiClient {
         return result;
     }
 
+    String ensurePhoneBackupFolder() throws Exception {
+        for (Entry folder : folders()) if (folder.parentId == null && "Backup telefono".equals(folder.name)) return folder.id;
+        createFolder("Backup telefono", null);
+        for (Entry folder : folders()) if (folder.parentId == null && "Backup telefono".equals(folder.name)) return folder.id;
+        throw new Exception("Impossibile preparare la cartella Backup telefono");
+    }
+
     void move(String id, String parentId) throws Exception {
         request("PATCH", "/api/entries/" + id + "/move", new JSONObject().put("parentId", parentId == null ? JSONObject.NULL : parentId), true, true);
     }
