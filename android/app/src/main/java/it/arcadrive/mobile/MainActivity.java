@@ -330,7 +330,7 @@ public final class MainActivity extends Activity {
                     LinearLayout labels = new LinearLayout(MainActivity.this); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(13), 0, 0, 0);
                     TextView name = text(entry.name, 15); name.setTypeface(medium); name.setMaxLines(2); labels.addView(name);
                     String detailText = entry.folder() ? "Cartella" : formatSize(entry.size);
-                    if (entry.mime.startsWith("image/") && !entry.updatedAt.isBlank()) detailText += "  ·  " + formatEntryDate(entry.updatedAt);
+                    if (entry.mime.startsWith("image/") && !entry.displayDate.isBlank()) detailText += "  ·  " + formatEntryDate(entry.displayDate);
                     TextView detail = text(detailText, 13); detail.setTextColor(Color.rgb(112, 124, 143)); detail.setPadding(0, dp(3), 0, 0); labels.addView(detail);
                     row.addView(labels, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
                     Button actions = new Button(MainActivity.this); actions.setText("⋮"); actions.setTextSize(21); actions.setTextColor(Color.rgb(91, 104, 125)); actions.setMinWidth(0); actions.setMinimumWidth(0); actions.setPadding(0, 0, 0, 0); actions.setBackground(rounded(Color.TRANSPARENT, Color.TRANSPARENT, 10)); actions.setContentDescription("Azioni per " + entry.name); actions.setOnClickListener(v -> entryMenu(entry));
