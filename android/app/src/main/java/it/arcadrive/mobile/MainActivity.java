@@ -17,10 +17,14 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.InsetDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.graphics.pdf.PdfRenderer;
 import android.provider.OpenableColumns;
 import android.text.InputType;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.LruCache;
 import android.view.Gravity;
 import android.view.View;
@@ -72,6 +76,8 @@ public final class MainActivity extends Activity {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final ExecutorService pdfIo = Executors.newSingleThreadExecutor();
     private final ExecutorService thumbnailIo = Executors.newFixedThreadPool(3);
+    private final Handler uiHandler = new Handler(Looper.getMainLooper());
+    private Runnable pendingSearch;
     private final Object pdfLock = new Object();
     private final LruCache<Integer, Bitmap> pdfPageCache = new LruCache<Integer, Bitmap>(48 * 1024 * 1024) {
         @Override protected int sizeOf(Integer key, Bitmap bitmap) { return bitmap.getAllocationByteCount(); }
@@ -199,19 +205,18 @@ public final class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(PAGE);
         LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(12), dp(10), dp(12), dp(10)); header.setBackgroundColor(NAVY);
         back = smallButton(currentFolder == null ? "☰" : "←"); header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
-        title = text("I miei file", 21); title.setTypeface(bold); title.setGravity(Gravity.CENTER_VERTICAL); title.setSingleLine(); title.setTextColor(Color.WHITE); header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
+        title = text("I miei file", 20); title.setTypeface(medium); title.setGravity(Gravity.CENTER_VERTICAL); title.setSingleLine(); title.setTextColor(Color.WHITE); header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
         Button add = smallButton("＋"); header.addView(add, new LinearLayout.LayoutParams(dp(48), dp(48)));
         pasteButton = smallButton("⎘"); pasteButton.setContentDescription("Incolla"); pasteButton.setVisibility(clipboardEntry == null ? View.GONE : View.VISIBLE); header.addView(pasteButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
         Button more = smallButton("⋮"); header.addView(more, new LinearLayout.LayoutParams(dp(48), dp(48)));
         root.addView(header);
 
-        search = input("Cerca file e cartelle", InputType.TYPE_CLASS_TEXT); search.setSingleLine();
-        search.setBackground(rounded(Color.WHITE, LINE, 12));
-        LinearLayout searchRow = new LinearLayout(this); searchRow.setGravity(Gravity.CENTER_VERTICAL); searchRow.setPadding(dp(14), dp(14), dp(14), dp(8)); searchRow.addView(search, new LinearLayout.LayoutParams(0, dp(52), 1));
-        Button searchButton = secondary("Cerca"); LinearLayout.LayoutParams searchButtonParams = new LinearLayout.LayoutParams(dp(92), dp(52)); searchButtonParams.leftMargin = dp(8); searchRow.addView(searchButton, searchButtonParams); root.addView(searchRow);
+        search = input("⌕  Cerca file e cartelle", InputType.TYPE_CLASS_TEXT); search.setSingleLine();
+        search.setBackground(rounded(Color.WHITE, LINE, 14));
+        LinearLayout searchRow = new LinearLayout(this); searchRow.setGravity(Gravity.CENTER_VERTICAL); searchRow.setPadding(dp(16), dp(16), dp(16), dp(8)); searchRow.addView(search, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))); root.addView(searchRow);
 
-        list = new ListView(this); list.setDividerHeight(0); list.setPadding(dp(8), dp(4), dp(8), dp(6)); list.setClipToPadding(false); list.setBackgroundColor(PAGE); root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-        LinearLayout nav = new LinearLayout(this); nav.setGravity(Gravity.CENTER); nav.setPadding(dp(10), dp(8), dp(10), dp(8)); nav.setBackgroundColor(Color.WHITE);
+        list = new ListView(this); list.setDivider(new android.graphics.drawable.ColorDrawable(LINE)); list.setDividerHeight(dp(1)); list.setPadding(dp(16), dp(4), dp(16), dp(6)); list.setClipToPadding(false); list.setBackgroundColor(PAGE); root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        LinearLayout nav = new LinearLayout(this); nav.setGravity(Gravity.CENTER); nav.setPadding(dp(10), dp(8), dp(10), dp(8)); nav.setBackgroundColor(Color.WHITE); nav.setElevation(dp(3));
         navFiles = navButton("▦  File"); navImages = navButton("▧  Immagini"); navTrash = navButton("♲  Cestino");
         nav.addView(navFiles, weighted()); nav.addView(navImages, weighted()); nav.addView(navTrash, weighted()); root.addView(nav);
         FrameLayout shell = new FrameLayout(this); shell.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -227,7 +232,15 @@ public final class MainActivity extends Activity {
         add.setOnClickListener(v -> addMenu());
         pasteButton.setOnClickListener(v -> pasteClipboard());
         more.setOnClickListener(v -> accountMenu());
-        searchButton.setOnClickListener(v -> loadEntries());
+        search.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
+                if (!search.hasFocus()) return;
+                if (pendingSearch != null) uiHandler.removeCallbacks(pendingSearch);
+                pendingSearch = () -> loadEntries(); uiHandler.postDelayed(pendingSearch, 350);
+            }
+            @Override public void afterTextChanged(Editable value) {}
+        });
         navFiles.setOnClickListener(v -> switchView("files")); navImages.setOnClickListener(v -> switchView("images")); navTrash.setOnClickListener(v -> switchView("trash"));
         list.setOnItemClickListener((parent, row, position, id) -> openEntry(currentEntries.get(position)));
         list.setOnItemLongClickListener((parent, row, position, id) -> { entryMenu(currentEntries.get(position)); return true; });
@@ -294,8 +307,8 @@ public final class MainActivity extends Activity {
             list.setAdapter(new ArrayAdapter<Entry>(this, android.R.layout.simple_list_item_2, android.R.id.text1, entries) {
                 @Override public View getView(int position, View convert, ViewGroup parent) {
                     Entry entry = getItem(position);
-                    LinearLayout row = new LinearLayout(MainActivity.this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(16), dp(13), dp(16), dp(13));
-                    row.setBackground(new InsetDrawable(rounded(Color.WHITE, LINE, 13), 0, dp(4), 0, dp(4)));
+                    LinearLayout row = new LinearLayout(MainActivity.this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(2), dp(11), dp(2), dp(11)); row.setMinimumHeight(dp(70));
+                    row.setBackgroundColor(Color.TRANSPARENT);
                     View badge = entry.mime.startsWith("image/") ? thumbnailBadge(entry) : new FileBadgeView(entry);
                     badge.setElevation(dp(1)); row.addView(badge, new LinearLayout.LayoutParams(dp(48), dp(48)));
                     LinearLayout labels = new LinearLayout(MainActivity.this); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(13), 0, 0, 0);
@@ -596,9 +609,10 @@ public final class MainActivity extends Activity {
 
     private void styleNav(Button button, boolean active) {
         if (button == null) return;
-        button.setTextColor(active ? Color.WHITE : Color.rgb(91, 104, 125));
-        button.setBackground(rounded(active ? NAVY : Color.TRANSPARENT, Color.TRANSPARENT, 12));
-        button.setElevation(active ? dp(2) : 0);
+        button.setTextColor(active ? Color.rgb(32, 166, 134) : Color.rgb(105, 117, 136));
+        button.setTypeface(active ? medium : regular);
+        button.setBackgroundColor(Color.TRANSPARENT);
+        button.setElevation(0);
     }
 
     private void styleDrawerNav(Button button, boolean active) {
