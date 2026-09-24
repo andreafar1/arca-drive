@@ -800,6 +800,13 @@ app.get('/api/entries', auth, async (req, res) => {
        AND ($5::boolean OR $4::text IS NOT NULL OR e.parent_id IS NOT DISTINCT FROM $3::uuid)
        AND ($4::text IS NULL OR e.name ILIKE $4)
        AND (NOT $5::boolean OR (e.kind='file' AND e.mime_type LIKE 'image/%'))
+       AND (NOT $5::boolean OR NOT EXISTS (
+         WITH RECURSIVE ancestors AS (
+           SELECT p.id,p.parent_id,p.is_trashed FROM entries p WHERE p.id=e.parent_id
+           UNION ALL
+           SELECT p.id,p.parent_id,p.is_trashed FROM entries p JOIN ancestors a ON p.id=a.parent_id
+         ) SELECT 1 FROM ancestors WHERE is_trashed=true
+       ))
      ORDER BY
        CASE WHEN $5::boolean THEN COALESCE(e.source_modified_at,e.created_at) END DESC,
        CASE WHEN NOT $5::boolean THEN e.kind END DESC,
@@ -1138,6 +1145,47 @@ app.post('/api/nas/files', auth, writable, upload.array('files', 20), async (req
     await Promise.all(temporaryFiles.map(file => fs.unlink(file.path).catch(() => {})));
     await Promise.all(createdPaths.map(target => fs.unlink(target).catch(() => {})));
     res.status(error.code === 'EEXIST' ? 409 : error.status || 400).json({ error: error.code === 'EEXIST' ? 'Esiste già un file con questo nome' : error.message });
+  }
+});
+
+app.post('/api/nas/copy', auth, writable, async (req, res) => {
+  try {
+    const source = await existingNasPath(req.body.source || '');
+    if (!source.relative) return res.status(400).json({ error: 'La cartella principale del NAS non può essere copiata' });
+    const parent = await existingNasPath(req.body.destination || '');
+    const parentStat = await fs.stat(parent.real);
+    if (!parentStat.isDirectory()) return res.status(400).json({ error: 'La destinazione non è una cartella' });
+    const original = path.basename(source.real);
+    const extension = path.extname(original);
+    const base = extension ? original.slice(0, -extension.length) : original;
+    let name = original;
+    let target = path.join(parent.real, name);
+    for (let index = 1; index < 1000; index++) {
+      try { await fs.access(target); name = `${base} - copia${index > 1 ? ` ${index}` : ''}${extension}`; target = path.join(parent.real, name); }
+      catch (error) { if (error.code === 'ENOENT') break; throw error; }
+    }
+    if (!isInside(parent.root, target) || target.startsWith(source.real + path.sep)) return res.status(400).json({ error: 'Destinazione non valida' });
+    await fs.cp(source.real, target, { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true });
+    res.status(201).json({ id: parent.relative ? `${parent.relative}/${name}` : name, name });
+  } catch (error) {
+    res.status(error.code === 'EEXIST' ? 409 : error.status || 400).json({ error: error.code === 'EEXIST' ? 'Esiste già un elemento con questo nome' : error.message });
+  }
+});
+
+app.patch('/api/nas/move', auth, writable, async (req, res) => {
+  try {
+    const source = await existingNasPath(req.body.source || '');
+    if (!source.relative) return res.status(400).json({ error: 'La cartella principale del NAS non può essere spostata' });
+    const parent = await existingNasPath(req.body.destination || '');
+    const parentStat = await fs.stat(parent.real);
+    if (!parentStat.isDirectory()) return res.status(400).json({ error: 'La destinazione non è una cartella' });
+    const target = path.join(parent.real, path.basename(source.real));
+    if (!isInside(parent.root, target) || target === source.real || target.startsWith(source.real + path.sep)) return res.status(400).json({ error: 'Destinazione non valida' });
+    await fs.access(target).then(() => { const conflict = new Error('Esiste già un elemento con questo nome'); conflict.code = 'EEXIST'; throw conflict; }).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    await fs.rename(source.real, target);
+    res.json({ id: parent.relative ? `${parent.relative}/${path.basename(target)}` : path.basename(target) });
+  } catch (error) {
+    res.status(error.code === 'EEXIST' ? 409 : error.status || 400).json({ error: error.code === 'EEXIST' ? 'Esiste già un elemento con questo nome' : error.message });
   }
 });
 
