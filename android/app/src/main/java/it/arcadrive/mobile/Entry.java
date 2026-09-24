@@ -11,6 +11,7 @@ final class Entry {
     final long size;
     final boolean system;
     final boolean nas;
+    final String updatedAt;
 
     Entry(JSONObject json) {
         id = json.optString("id");
@@ -21,6 +22,7 @@ final class Entry {
         size = json.optLong("size_bytes", 0);
         system = json.optBoolean("is_system", false);
         nas = json.optBoolean("nas", false);
+        updatedAt = json.optString("updated_at", "");
     }
 
     boolean folder() { return "folder".equals(kind); }
