@@ -21,10 +21,12 @@ import android.os.ParcelFileDescriptor;
 import android.graphics.pdf.PdfRenderer;
 import android.provider.OpenableColumns;
 import android.text.InputType;
+import android.util.LruCache;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
+import android.widget.AbsListView;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.EditText;
@@ -50,6 +52,9 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Date;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Locale;
 import java.text.SimpleDateFormat;
 import java.util.concurrent.ExecutorService;
@@ -65,6 +70,12 @@ public final class MainActivity extends Activity {
     private final Typeface medium = Typeface.create("sans-serif-medium", Typeface.NORMAL);
     private final Typeface bold = Typeface.create("sans-serif", Typeface.BOLD);
     private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final ExecutorService pdfIo = Executors.newSingleThreadExecutor();
+    private final Object pdfLock = new Object();
+    private final LruCache<Integer, Bitmap> pdfPageCache = new LruCache<Integer, Bitmap>(48 * 1024 * 1024) {
+        @Override protected int sizeOf(Integer key, Bitmap bitmap) { return bitmap.getAllocationByteCount(); }
+    };
+    private final Set<Integer> pdfRendering = Collections.synchronizedSet(new HashSet<>());
     private final Deque<Entry> folderStack = new ArrayDeque<>();
     private SecureStore secure;
     private ApiClient api;
@@ -87,6 +98,8 @@ public final class MainActivity extends Activity {
     private boolean internalViewer;
     private PdfRenderer activePdfRenderer;
     private ParcelFileDescriptor activePdfDescriptor;
+    private final List<Float> activePdfRatios = new ArrayList<>();
+    private int pdfRenderGeneration;
     private List<Entry> galleryEntries = new ArrayList<>();
     private int galleryIndex;
     private int galleryRequestId;
@@ -335,10 +348,30 @@ public final class MainActivity extends Activity {
         try {
             activePdfDescriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
             activePdfRenderer = new PdfRenderer(activePdfDescriptor);
+            activePdfRatios.clear();
+            synchronized (pdfLock) {
+                for (int index = 0; index < activePdfRenderer.getPageCount(); index++) {
+                    PdfRenderer.Page page = activePdfRenderer.openPage(index);
+                    activePdfRatios.add(page.getHeight() / (float) page.getWidth());
+                    page.close();
+                }
+            }
+            final int pageCount = activePdfRatios.size();
             LinearLayout root = viewerPage(); root.addView(viewerHeader(entry.name));
             ListView pages = new ListView(this); pages.setDividerHeight(dp(10)); pages.setDivider(new android.graphics.drawable.ColorDrawable(PAGE)); pages.setPadding(dp(10), dp(10), dp(10), dp(10)); pages.setClipToPadding(false); pages.setBackgroundColor(Color.rgb(225, 230, 237));
             pages.setAdapter(new PdfPageAdapter());
-            root.addView(pages, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1)); setContentView(root);
+            root.addView(pages, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+            LinearLayout status = new LinearLayout(this); status.setGravity(Gravity.CENTER_VERTICAL); status.setPadding(dp(16), dp(6), dp(16), dp(6)); status.setBackgroundColor(Color.WHITE);
+            TextView hint = text("Pizzica o tocca due volte per ingrandire", 12); hint.setTextColor(Color.rgb(91, 104, 125));
+            TextView counter = text(pageCount == 0 ? "" : "1 / " + pageCount, 13); counter.setTypeface(medium); counter.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            status.addView(hint, new LinearLayout.LayoutParams(0, dp(34), 1)); status.addView(counter, new LinearLayout.LayoutParams(dp(90), dp(34))); root.addView(status);
+            pages.setOnScrollListener(new AbsListView.OnScrollListener() {
+                @Override public void onScrollStateChanged(AbsListView view, int state) {}
+                @Override public void onScroll(AbsListView view, int firstVisible, int visibleCount, int totalCount) {
+                    if (totalCount > 0) counter.setText((Math.min(firstVisible + 1, totalCount)) + " / " + totalCount);
+                }
+            });
+            setContentView(root);
         } catch (Exception error) { closeInternalViewer(); fail(error); showDrive(); }
     }
 
@@ -382,7 +415,16 @@ public final class MainActivity extends Activity {
     }
 
     private void closeInternalViewer() { internalViewer = false; galleryRequestId++; closePdf(); }
-    private void closePdf() { if (activePdfRenderer != null) { activePdfRenderer.close(); activePdfRenderer = null; } if (activePdfDescriptor != null) { try { activePdfDescriptor.close(); } catch (Exception ignored) {} activePdfDescriptor = null; } }
+    private void closePdf() {
+        pdfRenderGeneration++;
+        pdfPageCache.evictAll();
+        pdfRendering.clear();
+        activePdfRatios.clear();
+        synchronized (pdfLock) {
+            if (activePdfRenderer != null) { activePdfRenderer.close(); activePdfRenderer = null; }
+            if (activePdfDescriptor != null) { try { activePdfDescriptor.close(); } catch (Exception ignored) {} activePdfDescriptor = null; }
+        }
+    }
 
     private void addMenu() {
         if (!"files".equals(view) && !"nas".equals(view)) { chooseFile(); return; }
@@ -577,22 +619,47 @@ public final class MainActivity extends Activity {
     private static String formatSize(long bytes) { if (bytes < 1024) return bytes + " B"; if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024d); return String.format("%.1f MB", bytes / 1048576d); }
 
     private final class PdfPageAdapter extends BaseAdapter {
-        @Override public int getCount() { return activePdfRenderer == null ? 0 : activePdfRenderer.getPageCount(); }
+        @Override public int getCount() { return activePdfRatios.size(); }
         @Override public Object getItem(int position) { return position; }
         @Override public long getItemId(int position) { return position; }
         @Override public View getView(int position, View convertView, ViewGroup parent) {
             ZoomImageView pageView = convertView instanceof ZoomImageView ? (ZoomImageView) convertView : new ZoomImageView(MainActivity.this);
-            if (pageView.getDrawable() instanceof android.graphics.drawable.BitmapDrawable) {
-                Bitmap previous = ((android.graphics.drawable.BitmapDrawable) pageView.getDrawable()).getBitmap(); if (previous != null && !previous.isRecycled()) previous.recycle();
-            }
-            PdfRenderer.Page page = activePdfRenderer.openPage(position);
-            int width = Math.max(dp(280), getResources().getDisplayMetrics().widthPixels - dp(20));
-            int height = Math.max(1, Math.round(width * (page.getHeight() / (float) page.getWidth())));
-            Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888); bitmap.eraseColor(Color.WHITE);
-            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY); page.close();
-            pageView.setImageBitmap(bitmap); pageView.setBackgroundColor(Color.WHITE); pageView.setContentDescription("Pagina " + (position + 1));
-            pageView.setLayoutParams(new android.widget.AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, height));
+            int displayWidth = Math.max(dp(280), getResources().getDisplayMetrics().widthPixels - dp(20));
+            int displayHeight = Math.max(1, Math.round(displayWidth * activePdfRatios.get(position)));
+            pageView.setTag(position); pageView.setImageDrawable(null); pageView.setBackgroundColor(Color.WHITE); pageView.setContentDescription("Pagina " + (position + 1));
+            pageView.setLayoutParams(new AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, displayHeight));
+            Bitmap cached = pdfPageCache.get(position);
+            if (cached != null) pageView.setImageBitmap(cached);
+            else renderPdfPage(position, pageView, displayWidth);
             return pageView;
+        }
+
+        private void renderPdfPage(int position, ZoomImageView target, int displayWidth) {
+            if (!pdfRendering.add(position)) return;
+            final int generation = pdfRenderGeneration;
+            pdfIo.execute(() -> {
+                Bitmap bitmap = null;
+                try {
+                    synchronized (pdfLock) {
+                        if (generation != pdfRenderGeneration || activePdfRenderer == null) return;
+                        PdfRenderer.Page page = activePdfRenderer.openPage(position);
+                        int renderWidth = Math.min(2400, Math.max(displayWidth, displayWidth * 2));
+                        int renderHeight = Math.max(1, Math.round(renderWidth * (page.getHeight() / (float) page.getWidth())));
+                        bitmap = Bitmap.createBitmap(renderWidth, renderHeight, Bitmap.Config.ARGB_8888); bitmap.eraseColor(Color.WHITE);
+                        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY); page.close();
+                    }
+                    if (generation != pdfRenderGeneration || bitmap == null) return;
+                    pdfPageCache.put(position, bitmap);
+                    Bitmap rendered = bitmap;
+                    runOnUiThread(() -> {
+                        if (generation == pdfRenderGeneration && Integer.valueOf(position).equals(target.getTag())) target.setImageBitmap(rendered);
+                    });
+                } catch (Exception ignored) {
+                    if (bitmap != null && pdfPageCache.get(position) != bitmap && !bitmap.isRecycled()) bitmap.recycle();
+                } finally {
+                    pdfRendering.remove(position);
+                }
+            });
         }
     }
 
