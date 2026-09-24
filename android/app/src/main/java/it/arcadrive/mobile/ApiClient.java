@@ -101,6 +101,13 @@ final class ApiClient {
         throw new Exception("Impossibile preparare la cartella Backup telefono");
     }
 
+    String ensureNasPhoneBackupFolder() throws Exception {
+        for (Entry entry : nasEntries(null, "")) if (entry.folder() && "Backup telefono".equals(entry.name)) return entry.id;
+        createNasFolder("Backup telefono", null);
+        for (Entry entry : nasEntries(null, "")) if (entry.folder() && "Backup telefono".equals(entry.name)) return entry.id;
+        throw new Exception("Impossibile preparare Backup telefono sul NAS");
+    }
+
     void move(String id, String parentId) throws Exception {
         request("PATCH", "/api/entries/" + id + "/move", new JSONObject().put("parentId", parentId == null ? JSONObject.NULL : parentId), true, true);
     }
