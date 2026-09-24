@@ -119,6 +119,14 @@ final class ApiClient {
 
     void deleteNas(String path) throws Exception { request("DELETE", "/api/nas?path=" + enc(path), null, true, true); }
 
+    void copyNas(String source, String destination) throws Exception {
+        request("POST", "/api/nas/copy", new JSONObject().put("source", source).put("destination", destination == null ? "" : destination), true, true);
+    }
+
+    void moveNas(String source, String destination) throws Exception {
+        request("PATCH", "/api/nas/move", new JSONObject().put("source", source).put("destination", destination == null ? "" : destination), true, true);
+    }
+
     void copy(String id, String parentId) throws Exception {
         request("POST", "/api/entries/" + id + "/copy", new JSONObject().put("parentId", parentId == null ? JSONObject.NULL : parentId), true, true);
     }
