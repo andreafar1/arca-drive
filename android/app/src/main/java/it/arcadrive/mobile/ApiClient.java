@@ -149,6 +149,13 @@ final class ApiClient {
         return downloadPath("/api/nas/content?path=" + enc(path), destination);
     }
 
+    File downloadThumbnail(Entry entry, File destination) throws Exception {
+        String path = entry.nas
+            ? "/api/nas/thumbnail?path=" + enc(entry.id)
+            : "/api/entries/" + entry.id + "/thumbnail";
+        return downloadPath(path, destination);
+    }
+
     private File downloadPath(String path, File destination) throws Exception {
         HttpURLConnection connection = open("GET", path, true);
         if (connection.getResponseCode() == 401 && refresh()) connection = open("GET", path, true);
