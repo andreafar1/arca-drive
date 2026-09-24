@@ -206,14 +206,14 @@ async function loadEntries() {
   const query = new URLSearchParams();
   if (view === 'trash') query.set('trash', 'true');
   if (view === 'images') query.set('images', 'true');
-  if (currentFolder && view !== 'trash') query.set('parentId', currentFolder.id);
+  if (currentFolder && view !== 'trash') query.set(view === 'nas' ? 'path' : 'parentId', currentFolder.id);
   const q = $('#search').value.trim();
   if (q) query.set('q', q);
   try {
-    const entries = await api(`/api/entries?${query}`);
+    const entries = await api(view === 'nas' ? `/api/nas?${query}` : `/api/entries?${query}`);
     visibleEntries = entries;
     selectedEntries.clear();
-    $('#selectAll').disabled = user.role === 'viewer' || view === 'trash';
+    $('#selectAll').disabled = user.role === 'viewer' || view === 'trash' || view === 'nas';
     updateSelectionToolbar();
     $('#rows').innerHTML = entries.map(entry => `
       <div class="file-row" data-id="${entry.id}">
@@ -224,11 +224,11 @@ async function loadEntries() {
       </div>`).join('');
     entries.forEach((entry, index) => {
       const row = $$('#rows .file-row')[index];
-      row.draggable = user.role !== 'viewer' && !entry.is_system;
+      row.draggable = view !== 'nas' && user.role !== 'viewer' && !entry.is_system;
       row.querySelector('.file-name strong').textContent = entry.name;
       row.querySelector('.entry-owner').textContent = entry.owner_name;
       const checkbox = row.querySelector('.entry-select');
-      checkbox.disabled = user.role === 'viewer' || view === 'trash' || entry.is_system;
+      checkbox.disabled = user.role === 'viewer' || view === 'trash' || view === 'nas' || entry.is_system;
       checkbox.addEventListener('click', event => event.stopPropagation());
       checkbox.addEventListener('change', () => {
         if (checkbox.checked) selectedEntries.set(entry.id, entry);
@@ -286,7 +286,7 @@ async function loadEntries() {
           currentFolder = entry;
           updateFolderLocation();
           loadEntries();
-        } else if (isOfficeDocument(entry)) {
+        } else if (view !== 'nas' && isOfficeDocument(entry)) {
           openOfficeEditor(entry);
         } else {
           preview(entry);
@@ -328,7 +328,7 @@ async function openOfficeEditor(entry) {
 function updateSelectionToolbar() {
   const count = selectedEntries.size;
   const selectableCount = visibleEntries.filter(entry => !entry.is_system).length;
-  $('#selectAll').disabled = user.role === 'viewer' || view === 'trash' || selectableCount === 0;
+  $('#selectAll').disabled = user.role === 'viewer' || view === 'trash' || view === 'nas' || selectableCount === 0;
   $('#selectedCount').textContent = count;
   $('#bulkActions').classList.toggle('hidden', count === 0);
   $('#selectAll').checked = selectableCount > 0 && count === selectableCount;
@@ -393,15 +393,15 @@ $('#bulkTrash').addEventListener('click', () => {
 function updateFolderLocation() {
   const insideFolder = Boolean(currentFolder);
   $('#folderBack').classList.toggle('hidden', !insideFolder);
-  $('#newFolder').classList.toggle('hidden', user.role === 'viewer' || view !== 'files' || currentFolder?.is_system);
-  $('#title').textContent = insideFolder ? currentFolder.name : 'I miei file';
+  $('#newFolder').classList.toggle('hidden', user.role === 'viewer' || !['files', 'nas'].includes(view) || currentFolder?.is_system);
+  $('#title').textContent = insideFolder ? currentFolder.name : view === 'nas' ? 'NAS' : 'I miei file';
   renderBreadcrumb();
 }
 
 function renderBreadcrumb() {
   const breadcrumb = $('#breadcrumb');
   breadcrumb.replaceChildren();
-  if (view !== 'files') {
+  if (!['files', 'nas'].includes(view)) {
     const label = document.createElement('span');
     label.textContent = view === 'images' ? 'Raccolte' : 'Spazio aziendale';
     breadcrumb.append(label);
@@ -409,7 +409,7 @@ function renderBreadcrumb() {
   }
 
   const folders = folderHistory.filter(Boolean);
-  const levels = [{ name: 'I miei file', folder: null }, ...folders.map(folder => ({ name: folder.name, folder }))];
+  const levels = [{ name: view === 'nas' ? 'NAS' : 'I miei file', folder: null }, ...folders.map(folder => ({ name: folder.name, folder }))];
   if (currentFolder) levels.push({ name: currentFolder.name, folder: currentFolder });
 
   levels.forEach((level, index) => {
@@ -466,7 +466,7 @@ async function preview(entry) {
   const renderId = ++previewRenderId;
   previewEntryIndex = visibleEntries.findIndex(item => item.id === entry.id);
   $('#previewName').textContent = entry.name;
-  const url = `/api/entries/${entry.id}/content`;
+  const url = view === 'nas' ? `/api/nas/content?path=${encodeURIComponent(entry.id)}` : `/api/entries/${entry.id}/content`;
   const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!response.ok) return toast('Impossibile aprire il file');
   const blob = await response.blob();
@@ -559,9 +559,43 @@ function closeModal() {
   $('#cancel').classList.remove('hidden');
 }
 
+function renameNasEntry(entry) {
+  openModal('RINOMINA NAS', 'Rinomina elemento', '<label class="field">Nuovo nome<input id="nasName" required maxlength="255"></label>', async () => {
+    await api('/api/nas/rename', { method: 'PATCH', body: JSON.stringify({ path: entry.id, name: $('#nasName').value }) });
+    toast('Elemento NAS rinominato');
+    loadEntries();
+  });
+  $('#nasName').value = entry.name;
+  $('#nasName').select();
+}
+
+function deleteNasEntry(entry) {
+  openModal('ELIMINAZIONE NAS', 'Elimina definitivamente', '<p>Eliminare definitivamente <strong></strong> dal NAS? L’operazione non può essere annullata.</p>', async () => {
+    await api(`/api/nas?path=${encodeURIComponent(entry.id)}`, { method: 'DELETE' });
+    toast('Elemento eliminato dal NAS');
+    loadEntries();
+  });
+  $('#modalBody strong').textContent = entry.name;
+  $('#confirm').textContent = 'Elimina definitivamente';
+  $('#confirm').classList.add('danger-confirm');
+}
+
 function entryAction(entry) {
   if (entry.is_system) {
     toast('La cartella Immagini è fissa');
+    return;
+  }
+  if (view === 'nas') {
+    openModal('AZIONI NAS', entry.name, `
+      <div class="action-list">
+        <button type="button" id="chooseNasOpen"><span>↗</span><div><strong>${entry.kind === 'folder' ? 'Apri cartella' : 'Apri / visualizza'}</strong><small>Visualizza l’elemento dal NAS</small></div></button>
+        <button type="button" id="chooseNasRename"><span>✎</span><div><strong>Rinomina</strong><small>Modifica il nome sul NAS</small></div></button>
+        <button type="button" id="chooseNasDelete" class="danger"><span>×</span><div><strong>Elimina definitivamente</strong><small>Il NAS non utilizza il cestino di Arca Drive</small></div></button>
+      </div>`, async () => {});
+    $('#confirm').classList.add('hidden');
+    $('#chooseNasOpen').onclick = () => { closeModal(); entry.kind === 'folder' ? (folderHistory.push(currentFolder), currentFolder = entry, updateFolderLocation(), loadEntries()) : preview(entry); };
+    $('#chooseNasRename').onclick = () => renameNasEntry(entry);
+    $('#chooseNasDelete').onclick = () => deleteNasEntry(entry);
     return;
   }
   if (view === 'trash') {
@@ -638,9 +672,11 @@ function confirmTrash(entry) {
 }
 
 $('#newFolder').addEventListener('click', () => openModal('NUOVA CARTELLA', 'Crea una cartella', '<label class="field">Nome<input id="folderName" required maxlength="255"></label>', async () => {
-  await api('/api/folders', {
+  await api(view === 'nas' ? '/api/nas/folders' : '/api/folders', {
     method: 'POST',
-    body: JSON.stringify({ name: $('#folderName').value, parentId: currentFolder?.id || null })
+    body: JSON.stringify(view === 'nas'
+      ? { name: $('#folderName').value, path: currentFolder?.id || '' }
+      : { name: $('#folderName').value, parentId: currentFolder?.id || null })
   });
   toast('Cartella creata');
   loadEntries();
@@ -657,7 +693,7 @@ function setUploadProgress(percent, detail = '') {
 function sendFiles(form, files, retry = true) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
-    request.open('POST', '/api/files');
+    request.open('POST', view === 'nas' ? '/api/nas/files' : '/api/files');
     request.setRequestHeader('Authorization', `Bearer ${token}`);
     request.responseType = 'json';
     request.upload.addEventListener('progress', event => {
@@ -686,7 +722,8 @@ async function uploadFiles(files, parentId = currentFolder?.id || null) {
   if (!files.length || uploadInProgress) return;
   const form = new FormData();
   files.forEach(file => form.append('files', file));
-  if (view === 'images' && !parentId) form.append('collection', 'images');
+  if (view === 'nas') form.append('path', parentId || '');
+  else if (view === 'images' && !parentId) form.append('collection', 'images');
   else if (parentId) form.append('parentId', parentId);
   uploadInProgress = true;
   $('#upload').disabled = true;
@@ -838,8 +875,8 @@ $$('.nav').forEach(button => button.addEventListener('click', () => {
   $('#drive').classList.toggle('hidden', view === 'people' || view === 'options');
   $('#pageActions').classList.toggle('hidden', view === 'people' || view === 'options');
   $('#bulkActions').classList.add('hidden');
-  $('#newFolder').classList.toggle('hidden', view !== 'files' || user.role === 'viewer');
-  $('#title').textContent = view === 'files' ? 'I miei file' : view === 'images' ? 'Immagini' : view === 'trash' ? 'Cestino' : view === 'options' ? 'Opzioni' : 'Persone';
+  $('#newFolder').classList.toggle('hidden', !['files', 'nas'].includes(view) || user.role === 'viewer');
+  $('#title').textContent = view === 'files' ? 'I miei file' : view === 'images' ? 'Immagini' : view === 'nas' ? 'NAS' : view === 'trash' ? 'Cestino' : view === 'options' ? 'Opzioni' : 'Persone';
   $('#empty').textContent = view === 'images' ? 'Non ci sono ancora immagini.' : view === 'trash' ? 'Il cestino è vuoto.' : 'Questa cartella è vuota.';
   renderBreadcrumb();
   $('#folderBack').classList.add('hidden');
