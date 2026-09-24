@@ -559,25 +559,56 @@ public final class MainActivity extends Activity {
     private void entryMenu(Entry entry) {
         if (entry.system) { toast("La cartella Immagini è fissa"); return; }
         if (entry.nas || "nas".equals(view)) {
-            new AlertDialog.Builder(this).setTitle(entry.name).setItems(new String[]{entry.folder() ? "Apri" : "Apri / visualizza", "Rinomina", "Copia", "Taglia / sposta", "Elimina definitivamente"}, (d, which) -> {
+            String[] actions = entry.folder()
+                ? new String[]{"Apri", "Rinomina", "Cambia colore", "Copia", "Taglia / sposta", "Elimina definitivamente"}
+                : new String[]{"Apri / visualizza", "Rinomina", "Copia", "Taglia / sposta", "Elimina definitivamente"};
+            new AlertDialog.Builder(this).setTitle(entry.name).setItems(actions, (d, which) -> {
                 if (which == 0) openEntry(entry);
                 else if (which == 1) renameDialog(entry);
-                else if (which == 2) setClipboard(entry, false);
-                else if (which == 3) setClipboard(entry, true);
+                else if (entry.folder() && which == 2) folderColorDialog(entry);
+                else if (which == (entry.folder() ? 3 : 2)) setClipboard(entry, false);
+                else if (which == (entry.folder() ? 4 : 3)) setClipboard(entry, true);
                 else confirmNasDelete(entry);
             }).show();
         } else if ("trash".equals(view)) {
             new AlertDialog.Builder(this).setTitle(entry.name).setItems(new String[]{"Ripristina", "Elimina definitivamente"}, (d, which) -> confirmTrashAction(entry, which == 0)).show();
         } else {
-            new AlertDialog.Builder(this).setTitle(entry.name).setItems(new String[]{entry.folder() ? "Apri" : "Apri / visualizza", "Rinomina", "Copia", "Taglia", "Sposta in un’altra cartella", "Sposta nel cestino"}, (d, which) -> {
+            String[] actions = entry.folder()
+                ? new String[]{"Apri", "Rinomina", "Cambia colore", "Copia", "Taglia", "Sposta in un’altra cartella", "Sposta nel cestino"}
+                : new String[]{"Apri / visualizza", "Rinomina", "Copia", "Taglia", "Sposta in un’altra cartella", "Sposta nel cestino"};
+            new AlertDialog.Builder(this).setTitle(entry.name).setItems(actions, (d, which) -> {
                 if (which == 0) openEntry(entry);
                 else if (which == 1) renameDialog(entry);
-                else if (which == 2) setClipboard(entry, false);
-                else if (which == 3) setClipboard(entry, true);
-                else if (which == 4) moveDialog(entry);
+                else if (entry.folder() && which == 2) folderColorDialog(entry);
+                else if (which == (entry.folder() ? 3 : 2)) setClipboard(entry, false);
+                else if (which == (entry.folder() ? 4 : 3)) setClipboard(entry, true);
+                else if (which == (entry.folder() ? 5 : 4)) moveDialog(entry);
                 else confirmDelete(entry);
             }).show();
         }
+    }
+
+    private void folderColorDialog(Entry entry) {
+        String[] names = {"Verde acqua", "Blu cielo", "Viola", "Rosa", "Corallo", "Arancione", "Giallo", "Grigio ardesia"};
+        int selected = getPreferences(MODE_PRIVATE).getInt(folderColorKey(entry), 0);
+        new AlertDialog.Builder(this).setTitle("Colore di “" + entry.name + "”")
+            .setSingleChoiceItems(names, selected, (dialog, which) -> {
+                getPreferences(MODE_PRIVATE).edit().putInt(folderColorKey(entry), which).apply();
+                dialog.dismiss(); loadEntries();
+            }).setNegativeButton("Annulla", null).show();
+    }
+
+    private String folderColorKey(Entry entry) { return "folder_color_" + (entry.nas ? "nas_" : "drive_") + entry.id; }
+
+    private int folderColor(Entry entry, boolean background) {
+        int[][] colors = {
+            {Color.rgb(229,248,243), Color.rgb(40,181,147)}, {Color.rgb(228,242,255), Color.rgb(48,126,199)},
+            {Color.rgb(240,234,255), Color.rgb(116,86,203)}, {Color.rgb(255,234,246), Color.rgb(194,77,145)},
+            {Color.rgb(255,233,230), Color.rgb(211,84,72)}, {Color.rgb(255,240,222), Color.rgb(207,119,34)},
+            {Color.rgb(255,247,210), Color.rgb(181,142,25)}, {Color.rgb(234,238,245), Color.rgb(83,98,121)}
+        };
+        int index = Math.max(0, Math.min(colors.length - 1, getPreferences(MODE_PRIVATE).getInt(folderColorKey(entry), 0)));
+        return colors[index][background ? 0 : 1];
     }
 
     private void renameDialog(Entry entry) {
@@ -914,8 +945,8 @@ public final class MainActivity extends Activity {
             boolean presentation = extension.matches("pptx?|odp");
             boolean archive = extension.matches("zip|rar|7z|tar|gz");
             boolean media = entry.mime.startsWith("video/") || entry.mime.startsWith("audio/");
-            int background = entry.folder() ? Color.rgb(229, 248, 243) : pdf ? Color.rgb(255, 232, 235) : sheet ? Color.rgb(224, 247, 239) : presentation ? Color.rgb(255, 239, 221) : image ? Color.rgb(238, 234, 255) : archive ? Color.rgb(241, 235, 255) : media ? Color.rgb(228, 241, 255) : Color.rgb(234, 238, 245);
-            int foreground = entry.folder() ? Color.rgb(40, 181, 147) : pdf ? Color.rgb(204, 61, 82) : sheet ? Color.rgb(20, 139, 106) : presentation ? Color.rgb(198, 104, 28) : image ? Color.rgb(105, 87, 202) : archive ? Color.rgb(118, 82, 181) : media ? Color.rgb(48, 112, 181) : Color.rgb(76, 94, 124);
+            int background = entry.folder() ? folderColor(entry, true) : pdf ? Color.rgb(255, 232, 235) : sheet ? Color.rgb(224, 247, 239) : presentation ? Color.rgb(255, 239, 221) : image ? Color.rgb(238, 234, 255) : archive ? Color.rgb(241, 235, 255) : media ? Color.rgb(228, 241, 255) : Color.rgb(234, 238, 245);
+            int foreground = entry.folder() ? folderColor(entry, false) : pdf ? Color.rgb(204, 61, 82) : sheet ? Color.rgb(20, 139, 106) : presentation ? Color.rgb(198, 104, 28) : image ? Color.rgb(105, 87, 202) : archive ? Color.rgb(118, 82, 181) : media ? Color.rgb(48, 112, 181) : Color.rgb(76, 94, 124);
             paint.setStyle(Paint.Style.FILL); paint.setColor(background);
             canvas.drawRoundRect(new RectF(0, 0, getWidth(), getHeight()), dp(11), dp(11), paint);
             paint.setColor(foreground); paint.setStrokeWidth(dp(2)); paint.setStrokeCap(Paint.Cap.ROUND); paint.setStrokeJoin(Paint.Join.ROUND);
