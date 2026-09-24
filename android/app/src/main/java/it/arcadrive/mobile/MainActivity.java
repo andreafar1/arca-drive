@@ -81,6 +81,7 @@ public final class MainActivity extends Activity {
     private Button navTrash;
     private Button drawerNavFiles;
     private Button drawerNavImages;
+    private Button drawerNavNas;
     private Button drawerNavTrash;
     private ProgressDialog progress;
     private boolean internalViewer;
@@ -231,9 +232,9 @@ public final class MainActivity extends Activity {
 
         Button uploadButton = primary("＋  Carica file"); panel.addView(uploadButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); uploadButton.setOnClickListener(v -> { closeDrawer(); chooseFile(); });
         TextView categoryLabel = drawerLabel("CATEGORIE"); categoryLabel.setPadding(dp(8), dp(24), 0, dp(8)); panel.addView(categoryLabel);
-        drawerNavFiles = drawerButton("▦   I miei file"); drawerNavImages = drawerButton("▧   Immagini"); drawerNavTrash = drawerButton("♲   Cestino");
-        panel.addView(drawerNavFiles, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavImages, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavTrash, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
-        drawerNavFiles.setOnClickListener(v -> { closeDrawer(); switchView("files"); }); drawerNavImages.setOnClickListener(v -> { closeDrawer(); switchView("images"); }); drawerNavTrash.setOnClickListener(v -> { closeDrawer(); switchView("trash"); });
+        drawerNavFiles = drawerButton("▦   I miei file"); drawerNavImages = drawerButton("▧   Immagini"); drawerNavNas = drawerButton("▰   NAS"); drawerNavTrash = drawerButton("♲   Cestino");
+        panel.addView(drawerNavFiles, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavImages, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavNas, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavTrash, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        drawerNavFiles.setOnClickListener(v -> { closeDrawer(); switchView("files"); }); drawerNavImages.setOnClickListener(v -> { closeDrawer(); switchView("images"); }); drawerNavNas.setOnClickListener(v -> { closeDrawer(); switchView("nas"); }); drawerNavTrash.setOnClickListener(v -> { closeDrawer(); switchView("trash"); });
 
         TextView historyLabel = drawerLabel("CRONOLOGIA CARICAMENTI"); historyLabel.setPadding(dp(8), dp(24), 0, dp(8)); panel.addView(historyLabel);
         ScrollView historyScroll = new ScrollView(this); uploadHistoryContainer = new LinearLayout(this); uploadHistoryContainer.setOrientation(LinearLayout.VERTICAL); historyScroll.addView(uploadHistoryContainer); panel.addView(historyScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
@@ -311,7 +312,7 @@ public final class MainActivity extends Activity {
         async(() -> {
             File directory = new File(getCacheDir(), "previews"); directory.mkdirs();
             String safe = entry.name.replaceAll("[^A-Za-z0-9._ -]", "_");
-            return api.download(entry.id, new File(directory, safe));
+            return entry.nas ? api.downloadNas(entry.id, new File(directory, safe)) : api.download(entry.id, new File(directory, safe));
         }, file -> {
             stopBusy();
             if (entry.mime.contains("pdf")) {
@@ -357,8 +358,8 @@ public final class MainActivity extends Activity {
         image.setHorizontalSwipeListener(this::navigateGallery);
         int requestId = ++galleryRequestId; busy("Caricamento immagine…");
         async(() -> {
-            File directory = new File(getCacheDir(), "previews"); directory.mkdirs(); File destination = new File(directory, "image-" + entry.id);
-            api.download(entry.id, destination); return decodeSampled(destination, getResources().getDisplayMetrics().widthPixels * 2);
+            File directory = new File(getCacheDir(), "previews"); directory.mkdirs(); File destination = new File(directory, "image-" + Integer.toHexString(entry.id.hashCode()));
+            if (entry.nas) api.downloadNas(entry.id, destination); else api.download(entry.id, destination); return decodeSampled(destination, getResources().getDisplayMetrics().widthPixels * 2);
         }, bitmap -> { stopBusy(); if (requestId == galleryRequestId && internalViewer) image.setImageBitmap(bitmap); });
     }
 
@@ -384,7 +385,7 @@ public final class MainActivity extends Activity {
     private void closePdf() { if (activePdfRenderer != null) { activePdfRenderer.close(); activePdfRenderer = null; } if (activePdfDescriptor != null) { try { activePdfDescriptor.close(); } catch (Exception ignored) {} activePdfDescriptor = null; } }
 
     private void addMenu() {
-        if (!"files".equals(view)) { chooseFile(); return; }
+        if (!"files".equals(view) && !"nas".equals(view)) { chooseFile(); return; }
         new AlertDialog.Builder(this).setTitle("Aggiungi").setItems(new String[]{"Carica file", "Nuova cartella"}, (dialog, which) -> {
             if (which == 0) chooseFile(); else folderDialog();
         }).show();
@@ -400,7 +401,7 @@ public final class MainActivity extends Activity {
         if (requestCode != PICK_FILE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData(); String[] metadata = fileMetadata(uri);
         busy("Caricamento di " + metadata[0]);
-        async(() -> { api.upload(getContentResolver(), uri, metadata[0], metadata[1], currentFolder == null ? null : currentFolder.id, sent -> {}); return true; }, ignored -> {
+        async(() -> { if ("nas".equals(view)) api.uploadNas(getContentResolver(), uri, metadata[0], metadata[1], currentFolder == null ? null : currentFolder.id, sent -> {}); else api.upload(getContentResolver(), uri, metadata[0], metadata[1], currentFolder == null ? null : currentFolder.id, sent -> {}); return true; }, ignored -> {
             stopBusy(); recordUpload(metadata[0]); toast("File caricato"); loadEntries();
         });
     }
@@ -416,13 +417,19 @@ public final class MainActivity extends Activity {
     private void folderDialog() {
         EditText name = input("Nome cartella", InputType.TYPE_CLASS_TEXT);
         new AlertDialog.Builder(this).setTitle("Nuova cartella").setView(name).setNegativeButton("Annulla", null).setPositiveButton("Crea", (d, w) -> {
-            busy("Creazione…"); async(() -> { api.createFolder(name.getText().toString(), currentFolder == null ? null : currentFolder.id); return true; }, ok -> { stopBusy(); loadEntries(); });
+            busy("Creazione…"); async(() -> { if ("nas".equals(view)) api.createNasFolder(name.getText().toString(), currentFolder == null ? null : currentFolder.id); else api.createFolder(name.getText().toString(), currentFolder == null ? null : currentFolder.id); return true; }, ok -> { stopBusy(); loadEntries(); });
         }).show();
     }
 
     private void entryMenu(Entry entry) {
         if (entry.system) { toast("La cartella Immagini è fissa"); return; }
-        if ("trash".equals(view)) {
+        if (entry.nas || "nas".equals(view)) {
+            new AlertDialog.Builder(this).setTitle(entry.name).setItems(new String[]{entry.folder() ? "Apri" : "Apri / visualizza", "Rinomina", "Elimina definitivamente"}, (d, which) -> {
+                if (which == 0) openEntry(entry);
+                else if (which == 1) renameDialog(entry);
+                else confirmNasDelete(entry);
+            }).show();
+        } else if ("trash".equals(view)) {
             new AlertDialog.Builder(this).setTitle(entry.name).setItems(new String[]{"Ripristina", "Elimina definitivamente"}, (d, which) -> confirmTrashAction(entry, which == 0)).show();
         } else {
             new AlertDialog.Builder(this).setTitle(entry.name).setItems(new String[]{entry.folder() ? "Apri" : "Apri / visualizza", "Rinomina", "Copia", "Taglia", "Sposta in un’altra cartella", "Sposta nel cestino"}, (d, which) -> {
@@ -439,7 +446,13 @@ public final class MainActivity extends Activity {
     private void renameDialog(Entry entry) {
         EditText name = input("Nuovo nome", InputType.TYPE_CLASS_TEXT); name.setText(entry.name); name.setSelection(name.length());
         new AlertDialog.Builder(this).setTitle("Rinomina").setView(name).setNegativeButton("Annulla", null).setPositiveButton("Salva", (dialog, which) -> {
-            busy("Rinomina…"); async(() -> { api.rename(entry.id, name.getText().toString()); return true; }, ok -> { stopBusy(); toast("Elemento rinominato"); loadEntries(); });
+            busy("Rinomina…"); async(() -> { if (entry.nas) api.renameNas(entry.id, name.getText().toString()); else api.rename(entry.id, name.getText().toString()); return true; }, ok -> { stopBusy(); toast("Elemento rinominato"); loadEntries(); });
+        }).show();
+    }
+
+    private void confirmNasDelete(Entry entry) {
+        new AlertDialog.Builder(this).setTitle("Elimina definitivamente dal NAS").setMessage(entry.name + "\n\nQuesta operazione non può essere annullata.").setNegativeButton("Annulla", null).setPositiveButton("Elimina", (d, w) -> {
+            busy("Eliminazione…"); async(() -> { api.deleteNas(entry.id); return true; }, ok -> { stopBusy(); toast("Elemento eliminato dal NAS"); loadEntries(); });
         }).show();
     }
 
@@ -501,7 +514,7 @@ public final class MainActivity extends Activity {
 
     private void switchView(String next) {
         view = next; currentFolder = null; folderStack.clear(); search.setText("");
-        title.setText("files".equals(view) ? "I miei file" : "images".equals(view) ? "Immagini" : "Cestino");
+        title.setText("files".equals(view) ? "I miei file" : "images".equals(view) ? "Immagini" : "nas".equals(view) ? "NAS" : "Cestino");
         back.setText("☰"); updateNavState(); loadEntries();
     }
 
@@ -511,6 +524,7 @@ public final class MainActivity extends Activity {
         styleNav(navTrash, "trash".equals(view));
         styleDrawerNav(drawerNavFiles, "files".equals(view));
         styleDrawerNav(drawerNavImages, "images".equals(view));
+        styleDrawerNav(drawerNavNas, "nas".equals(view));
         styleDrawerNav(drawerNavTrash, "trash".equals(view));
     }
 
@@ -528,7 +542,7 @@ public final class MainActivity extends Activity {
 
     private void goBack() {
         currentFolder = folderStack.poll();
-        title.setText(currentFolder == null ? "I miei file" : currentFolder.name);
+        title.setText(currentFolder == null ? ("nas".equals(view) ? "NAS" : "I miei file") : currentFolder.name);
         back.setText(currentFolder == null ? "☰" : "←"); loadEntries();
     }
 
