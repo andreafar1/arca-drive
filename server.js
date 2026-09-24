@@ -786,7 +786,10 @@ app.get('/api/entries', auth, async (req, res) => {
        AND ($5::boolean OR $4::text IS NOT NULL OR e.parent_id IS NOT DISTINCT FROM $3::uuid)
        AND ($4::text IS NULL OR e.name ILIKE $4)
        AND (NOT $5::boolean OR (e.kind='file' AND e.mime_type LIKE 'image/%'))
-     ORDER BY e.kind DESC, lower(e.name)`,
+     ORDER BY
+       CASE WHEN $5::boolean THEN e.created_at END DESC,
+       CASE WHEN NOT $5::boolean THEN e.kind END DESC,
+       CASE WHEN NOT $5::boolean THEN lower(e.name) END`,
     params
   );
   res.json(rows);
