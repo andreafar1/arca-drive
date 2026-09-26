@@ -69,6 +69,8 @@ import java.util.List;
 import java.util.Date;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.Locale;
 import java.text.SimpleDateFormat;
@@ -127,6 +129,12 @@ public final class MainActivity extends Activity {
     private int galleryRequestId;
     private FrameLayout drawerOverlay;
     private LinearLayout uploadHistoryContainer;
+    private LinearLayout drawerFolderRows;
+    private ScrollView drawerFolderScroll;
+    private Button drawerFilesArrow;
+    private final Set<String> expandedFolderIds = new HashSet<>();
+    private boolean drawerFilesExpanded = true;
+    private int drawerFolderGeneration;
     private boolean drawerOpen;
     private Entry clipboardEntry;
     private boolean clipboardCut;
@@ -285,8 +293,23 @@ public final class MainActivity extends Activity {
         Button uploadButton = primary("＋  Carica file"); panel.addView(uploadButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); uploadButton.setOnClickListener(v -> { closeDrawer(); chooseFile(); });
         TextView categoryLabel = drawerLabel("CATEGORIE"); categoryLabel.setPadding(dp(8), dp(24), 0, dp(8)); panel.addView(categoryLabel);
         drawerNavFiles = drawerButton("▦   I miei file"); drawerNavImages = drawerButton("▧   Immagini"); drawerNavNas = drawerButton("▰   NAS"); drawerNavTrash = drawerButton("♲   Cestino");
-        panel.addView(drawerNavFiles, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavImages, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavNas, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavTrash, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        LinearLayout filesHeading = new LinearLayout(this); filesHeading.setGravity(Gravity.CENTER_VERTICAL);
+        filesHeading.addView(drawerNavFiles, new LinearLayout.LayoutParams(0, dp(52), 1));
+        drawerFilesArrow = drawerButton(drawerFilesExpanded ? "▾" : "▸"); drawerFilesArrow.setGravity(Gravity.CENTER); drawerFilesArrow.setContentDescription("Espandi o chiudi le cartelle di I miei file");
+        filesHeading.addView(drawerFilesArrow, new LinearLayout.LayoutParams(dp(42), dp(48)));
+        panel.addView(filesHeading);
+        drawerFolderScroll = new ScrollView(this); drawerFolderScroll.setFillViewport(false);
+        drawerFolderRows = new LinearLayout(this); drawerFolderRows.setOrientation(LinearLayout.VERTICAL); drawerFolderScroll.addView(drawerFolderRows);
+        drawerFolderScroll.setVisibility(drawerFilesExpanded ? View.VISIBLE : View.GONE);
+        panel.addView(drawerFolderScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220)));
+        panel.addView(drawerNavImages, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavNas, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavTrash, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
         drawerNavFiles.setOnClickListener(v -> { closeDrawer(); switchView("files"); }); drawerNavImages.setOnClickListener(v -> { closeDrawer(); switchView("images"); }); drawerNavNas.setOnClickListener(v -> { closeDrawer(); switchView("nas"); }); drawerNavTrash.setOnClickListener(v -> { closeDrawer(); switchView("trash"); });
+        drawerFilesArrow.setOnClickListener(v -> {
+            drawerFilesExpanded = !drawerFilesExpanded;
+            drawerFilesArrow.setText(drawerFilesExpanded ? "▾" : "▸");
+            drawerFolderScroll.setVisibility(drawerFilesExpanded ? View.VISIBLE : View.GONE);
+            if (drawerFilesExpanded) refreshDrawerFolders();
+        });
 
         TextView historyLabel = drawerLabel("CRONOLOGIA CARICAMENTI"); historyLabel.setPadding(dp(8), dp(24), 0, dp(8)); panel.addView(historyLabel);
         ScrollView historyScroll = new ScrollView(this); uploadHistoryContainer = new LinearLayout(this); uploadHistoryContainer.setOrientation(LinearLayout.VERTICAL); historyScroll.addView(uploadHistoryContainer); panel.addView(historyScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
@@ -298,8 +321,94 @@ public final class MainActivity extends Activity {
 
     private Button drawerButton(String label) { Button button = new Button(this); button.setText(label); button.setAllCaps(false); button.setTextSize(16); button.setTypeface(regular); button.setTextColor(Color.rgb(183, 193, 211)); button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL); button.setPadding(dp(14), 0, dp(14), 0); button.setBackground(rounded(Color.TRANSPARENT, Color.TRANSPARENT, 10)); return button; }
 
-    private void openDrawer() { if (drawerOverlay == null) return; drawerOpen = true; renderUploadHistory(); updateNavState(); drawerOverlay.setAlpha(0f); drawerOverlay.setVisibility(View.VISIBLE); drawerOverlay.animate().alpha(1f).setDuration(160).start(); }
+    private void openDrawer() { if (drawerOverlay == null) return; drawerOpen = true; renderUploadHistory(); updateNavState(); if (drawerFilesExpanded) refreshDrawerFolders(); drawerOverlay.setAlpha(0f); drawerOverlay.setVisibility(View.VISIBLE); drawerOverlay.animate().alpha(1f).setDuration(160).start(); }
     private void closeDrawer() { if (drawerOverlay == null) return; drawerOpen = false; drawerOverlay.setVisibility(View.GONE); }
+
+    private void refreshDrawerFolders() {
+        if (drawerFolderRows == null) return;
+        final int generation = ++drawerFolderGeneration;
+        drawerFolderRows.removeAllViews();
+        TextView loading = drawerLabel("Caricamento cartelle…"); loading.setPadding(dp(22), dp(8), 0, dp(8)); drawerFolderRows.addView(loading);
+        io.execute(() -> {
+            try {
+                List<Entry> folders = api.folders();
+                runOnUiThread(() -> { if (generation == drawerFolderGeneration) renderDrawerFolders(folders); });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    if (generation != drawerFolderGeneration || drawerFolderRows == null) return;
+                    drawerFolderRows.removeAllViews();
+                    TextView message = drawerLabel("Cartelle non disponibili"); message.setPadding(dp(22), dp(8), 0, dp(8)); drawerFolderRows.addView(message);
+                });
+            }
+        });
+    }
+
+    private void renderDrawerFolders(List<Entry> folders) {
+        if (drawerFolderRows == null) return;
+        drawerFolderRows.removeAllViews();
+        Map<String, Entry> byId = new HashMap<>();
+        for (Entry folder : folders) byId.put(folder.id, folder);
+        Map<String, List<Entry>> children = new HashMap<>();
+        for (Entry folder : folders) {
+            String parent = folder.parentId != null && byId.containsKey(folder.parentId) ? folder.parentId : "";
+            children.computeIfAbsent(parent, ignored -> new ArrayList<>()).add(folder);
+        }
+        if (currentFolder != null && "files".equals(view)) {
+            Entry parent = byId.get(currentFolder.parentId);
+            Set<String> visited = new HashSet<>();
+            while (parent != null && visited.add(parent.id)) {
+                expandedFolderIds.add(parent.id); parent = byId.get(parent.parentId);
+            }
+        }
+        Set<String> rendered = new HashSet<>();
+        renderDrawerBranch(children, byId, "", 0, rendered);
+        if (drawerFolderRows.getChildCount() == 0) {
+            TextView empty = drawerLabel("Nessuna cartella"); empty.setPadding(dp(22), dp(8), 0, dp(8)); drawerFolderRows.addView(empty);
+        }
+    }
+
+    private void renderDrawerBranch(Map<String, List<Entry>> children, Map<String, Entry> byId, String parentId, int depth, Set<String> rendered) {
+        List<Entry> siblings = children.get(parentId);
+        if (siblings == null) return;
+        siblings.sort((first, second) -> first.name.compareToIgnoreCase(second.name));
+        for (Entry folder : siblings) {
+            if (!rendered.add(folder.id)) continue;
+            LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(16 + Math.min(depth, 5) * 15), 0, dp(2), 0);
+            boolean active = "files".equals(view) && currentFolder != null && folder.id.equals(currentFolder.id);
+            row.setBackground(rounded(active ? Color.rgb(29, 42, 67) : Color.TRANSPARENT, Color.TRANSPARENT, 9));
+            FileBadgeView icon = new FileBadgeView(folder); row.addView(icon, new LinearLayout.LayoutParams(dp(27), dp(27)));
+            TextView label = text(folder.name, 14); label.setSingleLine(); label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            label.setTextColor(active ? Color.WHITE : Color.rgb(183, 193, 211)); label.setPadding(dp(8), 0, 0, 0);
+            row.addView(label, new LinearLayout.LayoutParams(0, dp(42), 1));
+            View.OnClickListener navigate = v -> openDrawerFolder(folder, byId);
+            icon.setOnClickListener(navigate); label.setOnClickListener(navigate);
+            if (children.containsKey(folder.id)) {
+                Button arrow = drawerButton(expandedFolderIds.contains(folder.id) ? "▾" : "▸");
+                arrow.setGravity(Gravity.CENTER); arrow.setTextSize(14);
+                arrow.setContentDescription("Espandi o chiudi " + folder.name);
+                row.addView(arrow, new LinearLayout.LayoutParams(dp(36), dp(42)));
+                arrow.setOnClickListener(v -> {
+                    if (!expandedFolderIds.add(folder.id)) expandedFolderIds.remove(folder.id);
+                    renderDrawerFolders(new ArrayList<>(byId.values()));
+                });
+            }
+            drawerFolderRows.addView(row);
+            if (expandedFolderIds.contains(folder.id)) renderDrawerBranch(children, byId, folder.id, depth + 1, rendered);
+        }
+    }
+
+    private void openDrawerFolder(Entry folder, Map<String, Entry> byId) {
+        view = "files"; currentFolder = folder; folderStack.clear();
+        List<Entry> ancestors = new ArrayList<>(); Set<String> visited = new HashSet<>();
+        Entry parent = byId.get(folder.parentId);
+        while (parent != null && visited.add(parent.id)) {
+            ancestors.add(parent); expandedFolderIds.add(parent.id); parent = byId.get(parent.parentId);
+        }
+        for (int index = ancestors.size() - 1; index >= 0; index--) folderStack.push(ancestors.get(index));
+        search.setText(""); title.setText(folder.name); back.setText("←");
+        closeDrawer(); updateNavState(); loadEntries();
+    }
 
     private void recordUpload(String name) {
         try {
@@ -590,7 +699,13 @@ public final class MainActivity extends Activity {
     private void folderDialog() {
         EditText name = input("Nome cartella", InputType.TYPE_CLASS_TEXT);
         new AlertDialog.Builder(this).setTitle("Nuova cartella").setView(name).setNegativeButton("Annulla", null).setPositiveButton("Crea", (d, w) -> {
-            busy("Creazione…"); async(() -> { if ("nas".equals(view)) api.createNasFolder(name.getText().toString(), currentFolder == null ? null : currentFolder.id); else api.createFolder(name.getText().toString(), currentFolder == null ? null : currentFolder.id); return true; }, ok -> { stopBusy(); loadEntries(); });
+            busy("Creazione…"); async(() -> { if ("nas".equals(view)) api.createNasFolder(name.getText().toString(), currentFolder == null ? null : currentFolder.id); else api.createFolder(name.getText().toString(), currentFolder == null ? null : currentFolder.id); return true; }, ok -> {
+                stopBusy(); loadEntries();
+                if (!"nas".equals(view)) {
+                    if (currentFolder != null) expandedFolderIds.add(currentFolder.id);
+                    refreshDrawerFolders();
+                }
+            });
         }).show();
     }
 
