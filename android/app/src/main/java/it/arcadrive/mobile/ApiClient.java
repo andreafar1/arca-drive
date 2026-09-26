@@ -123,6 +123,10 @@ final class ApiClient {
         request("POST", "/api/nas/copy", new JSONObject().put("source", source).put("destination", destination == null ? "" : destination), true, true);
     }
 
+    void importNas(String source, String parentId) throws Exception {
+        request("POST", "/api/nas/import", new JSONObject().put("source", source).put("parentId", parentId == null ? JSONObject.NULL : parentId), true, true);
+    }
+
     void moveNas(String source, String destination) throws Exception {
         request("PATCH", "/api/nas/move", new JSONObject().put("source", source).put("destination", destination == null ? "" : destination), true, true);
     }
