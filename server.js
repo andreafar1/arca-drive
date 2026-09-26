@@ -1172,6 +1172,65 @@ app.post('/api/nas/copy', auth, writable, async (req, res) => {
   }
 });
 
+// Import a NAS file or folder into the authenticated user's Drive.
+app.post('/api/nas/import', auth, writable, async (req, res) => {
+  const copiedFiles = [];
+  let client;
+  try {
+    const source = await existingNasPath(req.body.source || '');
+    if (!source.relative) return res.status(400).json({ error: 'Seleziona un file o una cartella del NAS' });
+    const sourceStat = await fs.lstat(source.real);
+    if (!sourceStat.isFile() && !sourceStat.isDirectory()) return res.status(400).json({ error: 'Tipo di elemento non supportato' });
+    const parentId = req.body.parentId || null;
+    let destination = null;
+    if (parentId) {
+      destination = await canAccess(parentId, req.user.sub, true);
+      if (!destination || destination.kind !== 'folder' || destination.is_trashed) return res.status(403).json({ error: 'Cartella di destinazione non accessibile' });
+      if (destination.is_system && (!sourceStat.isFile() || !nasMime(source.real).startsWith('image/'))) {
+        return res.status(400).json({ error: 'Nella cartella Immagini puoi copiare solo immagini' });
+      }
+    }
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const clone = async (real, targetParent, name) => {
+      const canonical = await fs.realpath(real);
+      if (!isInside(source.root, canonical) || canonical !== real) throw new Error('Collegamento NAS non supportato');
+      const stat = await fs.lstat(real);
+      if (!stat.isFile() && !stat.isDirectory()) throw new Error('La cartella contiene un elemento non supportato');
+      let storageName = null;
+      if (stat.isFile()) {
+        if (stat.size > MAX_FILE_SIZE) throw new Error(`Il file ${name} supera il limite di caricamento`);
+        storageName = crypto.randomUUID();
+        await fs.copyFile(real, path.join(STORAGE_DIR, storageName), fs.constants.COPYFILE_EXCL);
+        copiedFiles.push(storageName);
+      }
+      const folder = stat.isDirectory();
+      const { rows } = await client.query(
+        `INSERT INTO entries(parent_id,owner_id,name,kind,mime_type,size_bytes,storage_name,source_modified_at)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [targetParent, req.user.sub, cleanName(name), folder ? 'folder' : 'file', folder ? null : nasMime(name), folder ? 0 : stat.size, storageName, folder ? null : stat.mtime]
+      );
+      if (folder) {
+        for (const child of await fs.readdir(real, { withFileTypes: true })) {
+          if (!child.isFile() && !child.isDirectory()) throw new Error('La cartella NAS contiene collegamenti o elementi non supportati');
+          await clone(path.join(real, child.name), rows[0].id, child.name);
+        }
+      }
+      return rows[0];
+    };
+    const created = await clone(source.real, parentId, path.basename(source.real));
+    await recordChange(client, created.id, 'created', { kind: created.kind, parentId, importedFromNas: true });
+    await client.query('COMMIT');
+    res.status(201).json(created);
+  } catch (error) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    await Promise.all(copiedFiles.map(name => fs.unlink(path.join(STORAGE_DIR, name)).catch(() => {})));
+    res.status(error.status || (error.code === 'ENOENT' ? 404 : 400)).json({ error: error.code === 'ENOENT' ? 'Elemento NAS non trovato' : error.message });
+  } finally {
+    if (client) client.release();
+  }
+});
+
 app.patch('/api/nas/move', auth, writable, async (req, res) => {
   try {
     const source = await existingNasPath(req.body.source || '');
