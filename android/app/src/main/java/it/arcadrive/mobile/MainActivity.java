@@ -70,6 +70,7 @@ import java.util.Date;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.Locale;
@@ -136,9 +137,13 @@ public final class MainActivity extends Activity {
     private boolean drawerFilesExpanded = true;
     private int drawerFolderGeneration;
     private boolean drawerOpen;
-    private Entry clipboardEntry;
+    private final List<Entry> clipboardEntries = new ArrayList<>();
     private boolean clipboardCut;
     private Button pasteButton;
+    private final Map<String, Entry> selectedEntries = new LinkedHashMap<>();
+    private boolean selectionMode;
+    private LinearLayout selectionBar;
+    private TextView selectionCount;
     private boolean backupSettingsOpen;
 
     @Override public void onCreate(Bundle state) {
@@ -235,9 +240,19 @@ public final class MainActivity extends Activity {
         back = smallButton(currentFolder == null ? "☰" : "←"); header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
         title = text("I miei file", 20); title.setTypeface(medium); title.setGravity(Gravity.CENTER_VERTICAL); title.setSingleLine(); title.setTextColor(Color.WHITE); header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
         Button add = smallButton("＋"); header.addView(add, new LinearLayout.LayoutParams(dp(48), dp(48)));
-        pasteButton = smallButton("⎘"); pasteButton.setContentDescription("Incolla"); pasteButton.setVisibility(clipboardEntry == null ? View.GONE : View.VISIBLE); header.addView(pasteButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        Button selectButton = smallButton("☑"); selectButton.setContentDescription("Seleziona più elementi"); header.addView(selectButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        pasteButton = smallButton("⎘"); pasteButton.setContentDescription("Incolla"); pasteButton.setVisibility(clipboardEntries.isEmpty() ? View.GONE : View.VISIBLE); header.addView(pasteButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
         Button more = smallButton("⋮"); header.addView(more, new LinearLayout.LayoutParams(dp(48), dp(48)));
         root.addView(header);
+
+        selectionBar = new LinearLayout(this); selectionBar.setGravity(Gravity.CENTER_VERTICAL); selectionBar.setPadding(dp(16), dp(5), dp(16), dp(5)); selectionBar.setBackgroundColor(Color.rgb(228, 248, 242));
+        selectionCount = text("0 selezionati", 14); selectionCount.setTypeface(medium); selectionBar.addView(selectionCount, new LinearLayout.LayoutParams(0, dp(42), 1));
+        Button all = new Button(this); all.setText("Tutti"); selectionBar.addView(all);
+        Button selectedActions = new Button(this); selectedActions.setText("Azioni"); selectionBar.addView(selectedActions);
+        root.addView(selectionBar); updateSelectionBar();
+        all.setOnClickListener(v -> { for (Entry entry : currentEntries) if (!entry.system) selectedEntries.put(entry.id, entry); updateSelectionBar(); refreshSelectionRows(); });
+        selectedActions.setOnClickListener(v -> bulkMenu());
+        selectButton.setOnClickListener(v -> { if (selectionMode) clearSelection(); else { selectionMode = true; updateSelectionBar(); } });
 
         search = input("⌕  Cerca file e cartelle", InputType.TYPE_CLASS_TEXT); search.setSingleLine();
         search.setBackground(rounded(Color.WHITE, LINE, 14));
@@ -273,10 +288,10 @@ public final class MainActivity extends Activity {
             @Override public void afterTextChanged(Editable value) {}
         });
         navFiles.setOnClickListener(v -> switchView("files")); navImages.setOnClickListener(v -> switchView("images")); navTrash.setOnClickListener(v -> switchView("trash"));
-        list.setOnItemClickListener((parent, row, position, id) -> openEntry(currentEntries.get(position)));
-        list.setOnItemLongClickListener((parent, row, position, id) -> { entryMenu(currentEntries.get(position)); return true; });
-        imageGrid.setOnItemClickListener((parent, row, position, id) -> openEntry(currentEntries.get(position)));
-        imageGrid.setOnItemLongClickListener((parent, row, position, id) -> { entryMenu(currentEntries.get(position)); return true; });
+        list.setOnItemClickListener((parent, row, position, id) -> tapEntry(currentEntries.get(position)));
+        list.setOnItemLongClickListener((parent, row, position, id) -> { selectEntry(currentEntries.get(position)); return true; });
+        imageGrid.setOnItemClickListener((parent, row, position, id) -> tapEntry(currentEntries.get(position)));
+        imageGrid.setOnItemLongClickListener((parent, row, position, id) -> { selectEntry(currentEntries.get(position)); return true; });
         updateNavState();
         loadEntries();
     }
@@ -403,6 +418,7 @@ public final class MainActivity extends Activity {
     }
 
     private void openDrawerFolder(Entry folder, Map<String, Entry> byId) {
+        clearSelection();
         view = "files"; currentFolder = folder; folderStack.clear();
         List<Entry> ancestors = new ArrayList<>(); Set<String> visited = new HashSet<>();
         Entry parent = byId.get(folder.parentId);
@@ -449,7 +465,7 @@ public final class MainActivity extends Activity {
                 imageGrid.setAdapter(new ArrayAdapter<Entry>(this, android.R.layout.simple_list_item_1, entries) {
                     @Override public View getView(int position, View convert, ViewGroup parent) {
                         Entry entry = getItem(position);
-                        LinearLayout tile = new LinearLayout(MainActivity.this); tile.setOrientation(LinearLayout.VERTICAL);
+                        LinearLayout tile = new LinearLayout(MainActivity.this); tile.setOrientation(LinearLayout.VERTICAL); tile.setBackground(rounded(selectedEntries.containsKey(entry.id) ? Color.rgb(218, 247, 238) : Color.TRANSPARENT, selectedEntries.containsKey(entry.id) ? MINT : Color.TRANSPARENT, 12));
                         FrameLayout photo = new FrameLayout(MainActivity.this);
                         View thumbnail = thumbnailBadge(entry, dp(360));
                         photo.addView(thumbnail, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -460,8 +476,8 @@ public final class MainActivity extends Activity {
                         tile.addView(photo, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(168)));
                         TextView name = text(entry.name, 13); name.setTypeface(medium); name.setSingleLine(); name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE); name.setPadding(dp(2), dp(7), dp(2), 0); tile.addView(name);
                         if (!entry.displayDate.isBlank()) { TextView date = text(formatEntryDate(entry.displayDate), 12); date.setTextColor(Color.rgb(105, 117, 136)); date.setPadding(dp(2), dp(3), 0, 0); tile.addView(date); }
-                        tile.setOnClickListener(v -> openEntry(entry));
-                        tile.setOnLongClickListener(v -> { entryMenu(entry); return true; });
+                        tile.setOnClickListener(v -> tapEntry(entry));
+                        tile.setOnLongClickListener(v -> { selectEntry(entry); return true; });
                         return tile;
                     }
                 });
@@ -471,7 +487,7 @@ public final class MainActivity extends Activity {
                 @Override public View getView(int position, View convert, ViewGroup parent) {
                     Entry entry = getItem(position);
                     LinearLayout row = new LinearLayout(MainActivity.this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(2), dp(11), dp(2), dp(11)); row.setMinimumHeight(dp(70));
-                    row.setBackgroundColor(Color.TRANSPARENT);
+                    row.setBackground(rounded(selectedEntries.containsKey(entry.id) ? Color.rgb(218, 247, 238) : Color.TRANSPARENT, Color.TRANSPARENT, 10));
                     View badge = entry.mime.startsWith("image/") ? thumbnailBadge(entry) : new FileBadgeView(entry);
                     badge.setElevation(dp(1)); row.addView(badge, new LinearLayout.LayoutParams(dp(48), dp(48)));
                     LinearLayout labels = new LinearLayout(MainActivity.this); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(13), 0, 0, 0);
@@ -483,8 +499,8 @@ public final class MainActivity extends Activity {
                     Button actions = new Button(MainActivity.this); actions.setText("⋮"); actions.setTextSize(21); actions.setTextColor(Color.rgb(91, 104, 125)); actions.setMinWidth(0); actions.setMinimumWidth(0); actions.setPadding(0, 0, 0, 0); actions.setBackground(rounded(Color.TRANSPARENT, Color.TRANSPARENT, 10)); actions.setContentDescription("Azioni per " + entry.name); actions.setOnClickListener(v -> entryMenu(entry));
                     row.addView(actions, new LinearLayout.LayoutParams(dp(42), dp(42)));
                     row.setClickable(true);
-                    row.setOnClickListener(v -> openEntry(entry));
-                    row.setOnLongClickListener(v -> { entryMenu(entry); return true; });
+                    row.setOnClickListener(v -> tapEntry(entry));
+                    row.setOnLongClickListener(v -> { selectEntry(entry); return true; });
                     return row;
                 }
             });
@@ -493,9 +509,95 @@ public final class MainActivity extends Activity {
 
     private void openEntry(Entry entry) {
         if (entry.folder()) {
+            clearSelection();
             if (currentFolder != null) folderStack.push(currentFolder);
             currentFolder = entry; title.setText(entry.name); back.setText("←"); search.setText(""); loadEntries();
         } else preview(entry);
+    }
+
+    private void tapEntry(Entry entry) { if (selectionMode) selectEntry(entry); else openEntry(entry); }
+
+    private void selectEntry(Entry entry) {
+        if (entry.system) { toast("La cartella Immagini è fissa"); return; }
+        selectionMode = true;
+        if (selectedEntries.containsKey(entry.id)) selectedEntries.remove(entry.id); else selectedEntries.put(entry.id, entry);
+        updateSelectionBar(); refreshSelectionRows();
+    }
+
+    private void updateSelectionBar() {
+        if (selectionBar == null) return;
+        selectionBar.setVisibility(selectionMode ? View.VISIBLE : View.GONE);
+        selectionCount.setText(selectedEntries.size() + " selezionati");
+    }
+
+    private void refreshSelectionRows() {
+        if (list != null && list.getAdapter() instanceof BaseAdapter) ((BaseAdapter) list.getAdapter()).notifyDataSetChanged();
+        if (imageGrid != null && imageGrid.getAdapter() instanceof BaseAdapter) ((BaseAdapter) imageGrid.getAdapter()).notifyDataSetChanged();
+    }
+
+    private void clearSelection() { selectedEntries.clear(); selectionMode = false; updateSelectionBar(); refreshSelectionRows(); }
+
+    private void bulkMenu() {
+        if (selectedEntries.isEmpty()) { toast("Seleziona file o cartelle"); return; }
+        List<Entry> items = new ArrayList<>(selectedEntries.values());
+        String[] actions = "trash".equals(view) ? new String[]{"Ripristina", "Elimina definitivamente"}
+            : "nas".equals(view) ? new String[]{"Copia", "Taglia / sposta", "Elimina definitivamente"}
+            : new String[]{"Copia", "Taglia", "Sposta in un’altra cartella", "Sposta nel cestino"};
+        new AlertDialog.Builder(this).setTitle(items.size() + " elementi selezionati").setItems(actions, (dialog, which) -> {
+            if ("trash".equals(view)) confirmBulk(items, which == 0 ? "restore" : "delete");
+            else if ("nas".equals(view)) { if (which < 2) setClipboard(items, which == 1); else confirmBulk(items, "nasDelete"); }
+            else if (which < 2) setClipboard(items, which == 1);
+            else if (which == 2) bulkMoveDialog(items);
+            else confirmBulk(items, "trash");
+        }).show();
+    }
+
+    private void bulkMoveDialog(List<Entry> items) {
+        busy("Caricamento cartelle…");
+        async(() -> api.folders(), folders -> {
+            stopBusy(); List<Entry> choices = new ArrayList<>(); choices.add(null); choices.addAll(folders);
+            String[] labels = new String[choices.size()]; labels[0] = "I miei file";
+            for (int i = 1; i < labels.length; i++) labels[i] = choices.get(i).name;
+            new AlertDialog.Builder(this).setTitle("Sposta " + items.size() + " elementi").setItems(labels, (d, index) -> {
+                Entry destination = choices.get(index);
+                runBulk(items, "move", destination == null ? null : destination.id);
+            }).show();
+        });
+    }
+
+    private void confirmBulk(List<Entry> items, String action) {
+        String title = "restore".equals(action) ? "Ripristina" : "trash".equals(action) ? "Sposta nel cestino" : "Elimina definitivamente";
+        new AlertDialog.Builder(this).setTitle(title + " " + items.size() + " elementi")
+            .setMessage(("delete".equals(action) || "nasDelete".equals(action)) ? "Questa operazione non può essere annullata." : null)
+            .setNegativeButton("Annulla", null).setPositiveButton("Conferma", (d, w) -> runBulk(items, action, null)).show();
+    }
+
+    private void runBulk(List<Entry> items, String action, String destination) {
+        busy("Operazione in corso…");
+        async(() -> {
+            List<String> succeeded = new ArrayList<>(); int failed = 0;
+            for (Entry entry : items) {
+                try {
+                    switch (action) {
+                        case "move": api.move(entry.id, destination); break;
+                        case "trash": api.trash(entry.id); break;
+                        case "restore": api.restore(entry.id); break;
+                        case "delete": api.permanentDelete(entry.id); break;
+                        case "nasDelete": api.deleteNas(entry.id); break;
+                    }
+                    succeeded.add(entry.id);
+                } catch (Exception error) { failed++; }
+            }
+            return new Object[]{succeeded, failed};
+        }, result -> {
+            stopBusy();
+            @SuppressWarnings("unchecked") List<String> succeeded = (List<String>) result[0];
+            for (String id : succeeded) selectedEntries.remove(id);
+            if (selectedEntries.isEmpty()) selectionMode = false;
+            updateSelectionBar();
+            toast(succeeded.size() + " completati" + ((int) result[1] > 0 ? ", " + result[1] + " non riusciti" : ""));
+            loadEntries();
+        });
     }
 
     private View thumbnailBadge(Entry entry) {
@@ -782,26 +884,38 @@ public final class MainActivity extends Activity {
     }
 
     private void setClipboard(Entry entry, boolean cut) {
-        clipboardEntry = entry; clipboardCut = cut;
+        List<Entry> items = new ArrayList<>(); items.add(entry); setClipboard(items, cut);
+    }
+
+    private void setClipboard(List<Entry> items, boolean cut) {
+        clipboardEntries.clear(); clipboardEntries.addAll(items); clipboardCut = cut; clearSelection();
         if (pasteButton != null) pasteButton.setVisibility(View.VISIBLE);
-        toast(cut ? "Elemento tagliato: apri la destinazione e premi Incolla" : "Elemento copiato: apri la destinazione e premi Incolla");
+        toast(items.size() + " elementi " + (cut ? "tagliati" : "copiati") + ": apri la destinazione e premi Incolla");
     }
 
     private void pasteClipboard() {
-        if (clipboardEntry == null) return;
-        if (clipboardEntry.nas != "nas".equals(view)) { toast("Sorgente e destinazione devono trovarsi entrambe nel NAS oppure in I miei file"); return; }
+        if (clipboardEntries.isEmpty()) return;
+        if (clipboardEntries.get(0).nas != "nas".equals(view)) { toast("Sorgente e destinazione devono trovarsi entrambe nel NAS oppure in I miei file"); return; }
         if (!"files".equals(view) && !"nas".equals(view)) { toast("Apri la cartella di destinazione per incollare"); return; }
         String parentId = currentFolder == null ? null : currentFolder.id;
-        Entry source = clipboardEntry; boolean cut = clipboardCut;
+        List<Entry> sources = new ArrayList<>(clipboardEntries); boolean cut = clipboardCut;
         busy(cut ? "Spostamento…" : "Copia…");
         async(() -> {
-            if (source.nas) { if (cut) api.moveNas(source.id, parentId); else api.copyNas(source.id, parentId); }
-            else { if (cut) api.move(source.id, parentId); else api.copy(source.id, parentId); }
-            return true;
-        }, ok -> {
+            List<String> succeeded = new ArrayList<>(); int failed = 0;
+            for (Entry source : sources) {
+                try {
+                    if (source.nas) { if (cut) api.moveNas(source.id, parentId); else api.copyNas(source.id, parentId); }
+                    else { if (cut) api.move(source.id, parentId); else api.copy(source.id, parentId); }
+                    succeeded.add(source.id);
+                } catch (Exception error) { failed++; }
+            }
+            return new Object[]{succeeded, failed};
+        }, result -> {
             stopBusy();
-            if (cut) { clipboardEntry = null; clipboardCut = false; pasteButton.setVisibility(View.GONE); }
-            toast(cut ? "Elemento spostato" : "Copia creata"); loadEntries();
+            @SuppressWarnings("unchecked") List<String> succeeded = (List<String>) result[0];
+            if (cut) clipboardEntries.removeIf(entry -> succeeded.contains(entry.id));
+            pasteButton.setVisibility(clipboardEntries.isEmpty() ? View.GONE : View.VISIBLE);
+            toast(succeeded.size() + " completati" + ((int) result[1] > 0 ? ", " + result[1] + " non riusciti" : "")); loadEntries();
         });
     }
 
@@ -957,6 +1071,7 @@ public final class MainActivity extends Activity {
     }
 
     private void switchView(String next) {
+        clearSelection();
         view = next; currentFolder = null; folderStack.clear(); search.setText("");
         title.setText("files".equals(view) ? "I miei file" : "images".equals(view) ? "Immagini" : "nas".equals(view) ? "NAS" : "Cestino");
         back.setText("☰"); updateNavState(); loadEntries();
@@ -986,6 +1101,7 @@ public final class MainActivity extends Activity {
     }
 
     private void goBack() {
+        clearSelection();
         currentFolder = folderStack.poll();
         title.setText(currentFolder == null ? ("nas".equals(view) ? "NAS" : "I miei file") : currentFolder.name);
         back.setText(currentFolder == null ? "☰" : "←"); loadEntries();
