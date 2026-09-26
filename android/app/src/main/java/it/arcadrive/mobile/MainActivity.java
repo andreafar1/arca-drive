@@ -11,6 +11,8 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.LinearGradient;
+import android.graphics.Shader;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Typeface;
@@ -626,7 +628,7 @@ public final class MainActivity extends Activity {
 
     private void folderColorDialog(Entry entry) {
         String[] names = {"Verde acqua", "Blu cielo", "Viola", "Rosa", "Corallo", "Arancione", "Giallo", "Grigio ardesia"};
-        int selected = getPreferences(MODE_PRIVATE).getInt(folderColorKey(entry), 0);
+        int selected = getPreferences(MODE_PRIVATE).getInt(folderColorKey(entry), 1);
         new AlertDialog.Builder(this).setTitle("Colore di “" + entry.name + "”")
             .setSingleChoiceItems(names, selected, (dialog, which) -> {
                 getPreferences(MODE_PRIVATE).edit().putInt(folderColorKey(entry), which).apply();
@@ -643,7 +645,7 @@ public final class MainActivity extends Activity {
             {Color.rgb(255,233,230), Color.rgb(211,84,72)}, {Color.rgb(255,240,222), Color.rgb(207,119,34)},
             {Color.rgb(255,247,210), Color.rgb(181,142,25)}, {Color.rgb(234,238,245), Color.rgb(83,98,121)}
         };
-        int index = Math.max(0, Math.min(colors.length - 1, getPreferences(MODE_PRIVATE).getInt(folderColorKey(entry), 0)));
+        int index = Math.max(0, Math.min(colors.length - 1, getPreferences(MODE_PRIVATE).getInt(folderColorKey(entry), 1)));
         return colors[index][background ? 0 : 1];
     }
 
@@ -983,20 +985,61 @@ public final class MainActivity extends Activity {
             boolean media = entry.mime.startsWith("video/") || entry.mime.startsWith("audio/");
             int background = entry.folder() ? folderColor(entry, true) : pdf ? Color.rgb(255, 232, 235) : sheet ? Color.rgb(224, 247, 239) : presentation ? Color.rgb(255, 239, 221) : image ? Color.rgb(238, 234, 255) : archive ? Color.rgb(241, 235, 255) : media ? Color.rgb(228, 241, 255) : Color.rgb(234, 238, 245);
             int foreground = entry.folder() ? folderColor(entry, false) : pdf ? Color.rgb(204, 61, 82) : sheet ? Color.rgb(20, 139, 106) : presentation ? Color.rgb(198, 104, 28) : image ? Color.rgb(105, 87, 202) : archive ? Color.rgb(118, 82, 181) : media ? Color.rgb(48, 112, 181) : Color.rgb(76, 94, 124);
+            if (entry.folder()) { drawFolder(canvas, foreground); return; }
             paint.setStyle(Paint.Style.FILL); paint.setColor(background);
             canvas.drawRoundRect(new RectF(0, 0, getWidth(), getHeight()), dp(11), dp(11), paint);
             paint.setColor(foreground); paint.setStrokeWidth(dp(2)); paint.setStrokeCap(Paint.Cap.ROUND); paint.setStrokeJoin(Paint.Join.ROUND);
-            if (entry.folder()) drawFolder(canvas);
-            else drawLabel(canvas, pdf ? "PDF" : sheet ? "XLS" : presentation ? "PPT" : image ? "IMG" : archive ? "ZIP" : media ? (entry.mime.startsWith("audio/") ? "AUD" : "VID") : extension.matches("txt|md|rtf") ? "TXT" : extension.isBlank() ? "FILE" : extension.substring(0, Math.min(4, extension.length())).toUpperCase(Locale.ROOT));
+            drawLabel(canvas, pdf ? "PDF" : sheet ? "XLS" : presentation ? "PPT" : image ? "IMG" : archive ? "ZIP" : media ? (entry.mime.startsWith("audio/") ? "AUD" : "VID") : extension.matches("txt|md|rtf") ? "TXT" : extension.isBlank() ? "FILE" : extension.substring(0, Math.min(4, extension.length())).toUpperCase(Locale.ROOT));
         }
 
-        private void drawFolder(Canvas canvas) {
-            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(dp(2));
-            path.reset(); path.moveTo(dp(8), dp(17)); path.quadTo(dp(8), dp(13), dp(12), dp(13));
-            path.lineTo(dp(20), dp(13)); path.lineTo(dp(24), dp(17)); path.lineTo(dp(37), dp(17));
-            path.quadTo(dp(40), dp(17), dp(40), dp(21)); path.lineTo(dp(40), dp(35));
-            path.quadTo(dp(40), dp(39), dp(36), dp(39)); path.lineTo(dp(12), dp(39));
-            path.quadTo(dp(8), dp(39), dp(8), dp(35)); path.close(); canvas.drawPath(path, paint);
+        private void drawFolder(Canvas canvas, int color) {
+            canvas.save();
+            canvas.scale(getWidth() / 48f, getHeight() / 48f);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.argb(42, 17, 31, 50));
+            canvas.drawOval(new RectF(4, 39, 45, 45), paint);
+
+            // Linguetta e corpo posteriore, visibili dietro al foglio.
+            path.reset(); path.moveTo(4, 15); path.quadTo(4, 11, 8, 11);
+            path.lineTo(17, 11); path.quadTo(19, 11, 21, 14);
+            path.lineTo(39, 14); path.quadTo(44, 14, 44, 19);
+            path.lineTo(44, 36); path.quadTo(44, 40, 40, 40);
+            path.lineTo(8, 40); path.quadTo(4, 40, 4, 36); path.close();
+            paint.setColor(darker(color, 0.76f));
+            canvas.drawPath(path, paint);
+
+            paint.setColor(Color.rgb(244, 250, 251));
+            canvas.drawRoundRect(new RectF(7, 17, 41, 34), 2, 2, paint);
+            paint.setColor(Color.rgb(194, 213, 222));
+            canvas.drawRoundRect(new RectF(7, 20, 41, 22), 1, 1, paint);
+
+            // Pannello anteriore ampio con bordo superiore curvo.
+            path.reset(); path.moveTo(4, 24); path.quadTo(4, 20, 8, 20);
+            path.lineTo(40, 20); path.quadTo(44, 20, 44, 24);
+            path.lineTo(43, 39); path.quadTo(43, 42, 39, 42);
+            path.lineTo(8, 42); path.quadTo(4, 42, 4, 38); path.close();
+            paint.setShader(new LinearGradient(0, 20, 0, 42,
+                new int[]{lighter(color, 1.18f), color, darker(color, 0.78f)},
+                null, Shader.TileMode.CLAMP));
+            paint.setShadowLayer(1.8f, 0, 1, Color.argb(70, 12, 31, 49));
+            canvas.drawPath(path, paint);
+            paint.clearShadowLayer(); paint.setShader(null);
+            paint.setColor(Color.argb(100, 255, 255, 255));
+            paint.setStrokeWidth(0.9f); paint.setStyle(Paint.Style.STROKE);
+            canvas.drawLine(8, 21.5f, 39, 21.5f, paint);
+            paint.setStyle(Paint.Style.FILL);
+            canvas.restore();
+        }
+
+        private int lighter(int color, float factor) {
+            return Color.rgb(Math.min(255, (int) (Color.red(color) * factor)),
+                Math.min(255, (int) (Color.green(color) * factor)),
+                Math.min(255, (int) (Color.blue(color) * factor)));
+        }
+
+        private int darker(int color, float factor) {
+            return Color.rgb((int) (Color.red(color) * factor),
+                (int) (Color.green(color) * factor), (int) (Color.blue(color) * factor));
         }
 
         private void drawLabel(Canvas canvas, String label) {
