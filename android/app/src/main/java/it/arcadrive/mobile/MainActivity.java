@@ -541,11 +541,11 @@ public final class MainActivity extends Activity {
         if (selectedEntries.isEmpty()) { toast("Seleziona file o cartelle"); return; }
         List<Entry> items = new ArrayList<>(selectedEntries.values());
         String[] actions = "trash".equals(view) ? new String[]{"Ripristina", "Elimina definitivamente"}
-            : "nas".equals(view) ? new String[]{"Copia", "Taglia / sposta", "Elimina definitivamente"}
+            : "nas".equals(view) ? new String[]{"Copia", "Taglia / sposta", "Copia in Arca Drive", "Elimina definitivamente"}
             : new String[]{"Copia", "Taglia", "Sposta in un’altra cartella", "Sposta nel cestino"};
         new AlertDialog.Builder(this).setTitle(items.size() + " elementi selezionati").setItems(actions, (dialog, which) -> {
             if ("trash".equals(view)) confirmBulk(items, which == 0 ? "restore" : "delete");
-            else if ("nas".equals(view)) { if (which < 2) setClipboard(items, which == 1); else confirmBulk(items, "nasDelete"); }
+            else if ("nas".equals(view)) { if (which < 2) setClipboard(items, which == 1); else if (which == 2) importNasDialog(items); else confirmBulk(items, "nasDelete"); }
             else if (which < 2) setClipboard(items, which == 1);
             else if (which == 2) bulkMoveDialog(items);
             else confirmBulk(items, "trash");
@@ -565,6 +565,19 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private void importNasDialog(List<Entry> items) {
+        busy("Caricamento cartelle…");
+        async(() -> api.folders(), folders -> {
+            stopBusy(); List<Entry> choices = new ArrayList<>(); choices.add(null); choices.addAll(folders);
+            String[] labels = new String[choices.size()]; labels[0] = "I miei file";
+            for (int i = 1; i < labels.length; i++) labels[i] = choices.get(i).name;
+            new AlertDialog.Builder(this).setTitle("Copia dal NAS in Arca Drive").setItems(labels, (d, index) -> {
+                Entry destination = choices.get(index);
+                runBulk(items, "nasImport", destination == null ? null : destination.id);
+            }).show();
+        });
+    }
+
     private void confirmBulk(List<Entry> items, String action) {
         String title = "restore".equals(action) ? "Ripristina" : "trash".equals(action) ? "Sposta nel cestino" : "Elimina definitivamente";
         new AlertDialog.Builder(this).setTitle(title + " " + items.size() + " elementi")
@@ -575,7 +588,7 @@ public final class MainActivity extends Activity {
     private void runBulk(List<Entry> items, String action, String destination) {
         busy("Operazione in corso…");
         async(() -> {
-            List<String> succeeded = new ArrayList<>(); int failed = 0;
+            List<String> succeeded = new ArrayList<>(); int failed = 0; String firstError = "";
             for (Entry entry : items) {
                 try {
                     switch (action) {
@@ -584,18 +597,19 @@ public final class MainActivity extends Activity {
                         case "restore": api.restore(entry.id); break;
                         case "delete": api.permanentDelete(entry.id); break;
                         case "nasDelete": api.deleteNas(entry.id); break;
+                        case "nasImport": api.importNas(entry.id, destination); break;
                     }
                     succeeded.add(entry.id);
-                } catch (Exception error) { failed++; }
+                } catch (Exception error) { failed++; if (firstError.isEmpty()) firstError = error.getMessage(); }
             }
-            return new Object[]{succeeded, failed};
+            return new Object[]{succeeded, failed, firstError};
         }, result -> {
             stopBusy();
             @SuppressWarnings("unchecked") List<String> succeeded = (List<String>) result[0];
             for (String id : succeeded) selectedEntries.remove(id);
             if (selectedEntries.isEmpty()) selectionMode = false;
             updateSelectionBar();
-            toast(succeeded.size() + " completati" + ((int) result[1] > 0 ? ", " + result[1] + " non riusciti" : ""));
+            toast(succeeded.size() + " completati" + ((int) result[1] > 0 ? ", " + result[1] + " non riusciti: " + result[2] : ""));
             loadEntries();
         });
     }
@@ -819,14 +833,15 @@ public final class MainActivity extends Activity {
         if (entry.system) { toast("La cartella Immagini è fissa"); return; }
         if (entry.nas || "nas".equals(view)) {
             String[] actions = entry.folder()
-                ? new String[]{"Apri", "Rinomina", "Cambia colore", "Copia", "Taglia / sposta", "Elimina definitivamente"}
-                : new String[]{"Apri / visualizza", "Rinomina", "Copia", "Taglia / sposta", "Elimina definitivamente"};
+                ? new String[]{"Apri", "Rinomina", "Cambia colore", "Copia", "Taglia / sposta", "Copia in Arca Drive", "Elimina definitivamente"}
+                : new String[]{"Apri / visualizza", "Rinomina", "Copia", "Taglia / sposta", "Copia in Arca Drive", "Elimina definitivamente"};
             new AlertDialog.Builder(this).setTitle(entry.name).setItems(actions, (d, which) -> {
                 if (which == 0) openEntry(entry);
                 else if (which == 1) renameDialog(entry);
                 else if (entry.folder() && which == 2) folderColorDialog(entry);
                 else if (which == (entry.folder() ? 3 : 2)) setClipboard(entry, false);
                 else if (which == (entry.folder() ? 4 : 3)) setClipboard(entry, true);
+                else if (which == (entry.folder() ? 5 : 4)) { List<Entry> items = new ArrayList<>(); items.add(entry); importNasDialog(items); }
                 else confirmNasDelete(entry);
             }).show();
         } else if ("trash".equals(view)) {
@@ -895,16 +910,17 @@ public final class MainActivity extends Activity {
 
     private void pasteClipboard() {
         if (clipboardEntries.isEmpty()) return;
-        if (clipboardEntries.get(0).nas != "nas".equals(view)) { toast("Sorgente e destinazione devono trovarsi entrambe nel NAS oppure in I miei file"); return; }
+        if (clipboardEntries.get(0).nas != "nas".equals(view) && !(clipboardEntries.get(0).nas && !clipboardCut && "files".equals(view))) { toast("Per spostare elementi, apri una cartella nello stesso spazio; dal NAS puoi copiarli in Arca Drive"); return; }
         if (!"files".equals(view) && !"nas".equals(view)) { toast("Apri la cartella di destinazione per incollare"); return; }
         String parentId = currentFolder == null ? null : currentFolder.id;
+        String destinationView = view;
         List<Entry> sources = new ArrayList<>(clipboardEntries); boolean cut = clipboardCut;
         busy(cut ? "Spostamento…" : "Copia…");
         async(() -> {
             List<String> succeeded = new ArrayList<>(); int failed = 0;
             for (Entry source : sources) {
                 try {
-                    if (source.nas) { if (cut) api.moveNas(source.id, parentId); else api.copyNas(source.id, parentId); }
+                    if (source.nas) { if ("files".equals(destinationView)) api.importNas(source.id, parentId); else if (cut) api.moveNas(source.id, parentId); else api.copyNas(source.id, parentId); }
                     else { if (cut) api.move(source.id, parentId); else api.copy(source.id, parentId); }
                     succeeded.add(source.id);
                 } catch (Exception error) { failed++; }
