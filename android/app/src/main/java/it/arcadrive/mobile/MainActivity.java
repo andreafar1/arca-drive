@@ -301,7 +301,7 @@ public final class MainActivity extends Activity {
         drawerFolderScroll = new ScrollView(this); drawerFolderScroll.setFillViewport(false);
         drawerFolderRows = new LinearLayout(this); drawerFolderRows.setOrientation(LinearLayout.VERTICAL); drawerFolderScroll.addView(drawerFolderRows);
         drawerFolderScroll.setVisibility(drawerFilesExpanded ? View.VISIBLE : View.GONE);
-        panel.addView(drawerFolderScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220)));
+        panel.addView(drawerFolderScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
         panel.addView(drawerNavImages, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavNas, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))); panel.addView(drawerNavTrash, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
         drawerNavFiles.setOnClickListener(v -> { closeDrawer(); switchView("files"); }); drawerNavImages.setOnClickListener(v -> { closeDrawer(); switchView("images"); }); drawerNavNas.setOnClickListener(v -> { closeDrawer(); switchView("nas"); }); drawerNavTrash.setOnClickListener(v -> { closeDrawer(); switchView("trash"); });
         drawerFilesArrow.setOnClickListener(v -> {
@@ -362,6 +362,9 @@ public final class MainActivity extends Activity {
         }
         Set<String> rendered = new HashSet<>();
         renderDrawerBranch(children, byId, "", 0, rendered);
+        ViewGroup.LayoutParams folderScrollParams = drawerFolderScroll.getLayoutParams();
+        folderScrollParams.height = dp(Math.min(220, Math.max(42, rendered.size() * 42)));
+        drawerFolderScroll.setLayoutParams(folderScrollParams);
         if (drawerFolderRows.getChildCount() == 0) {
             TextView empty = drawerLabel("Nessuna cartella"); empty.setPadding(dp(22), dp(8), 0, dp(8)); drawerFolderRows.addView(empty);
         }
@@ -380,6 +383,7 @@ public final class MainActivity extends Activity {
             FileBadgeView icon = new FileBadgeView(folder); row.addView(icon, new LinearLayout.LayoutParams(dp(27), dp(27)));
             TextView label = text(folder.name, 14); label.setSingleLine(); label.setEllipsize(android.text.TextUtils.TruncateAt.END);
             label.setTextColor(active ? Color.WHITE : Color.rgb(183, 193, 211)); label.setPadding(dp(8), 0, 0, 0);
+            label.setGravity(Gravity.CENTER_VERTICAL);
             row.addView(label, new LinearLayout.LayoutParams(0, dp(42), 1));
             View.OnClickListener navigate = v -> openDrawerFolder(folder, byId);
             icon.setOnClickListener(navigate); label.setOnClickListener(navigate);
