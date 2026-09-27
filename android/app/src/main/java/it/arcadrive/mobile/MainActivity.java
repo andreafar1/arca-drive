@@ -51,6 +51,8 @@ import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.VideoView;
+import android.widget.MediaController;
 
 import androidx.core.content.FileProvider;
 import androidx.core.graphics.Insets;
@@ -145,6 +147,7 @@ public final class MainActivity extends Activity {
     private LinearLayout selectionBar;
     private TextView selectionCount;
     private Button sortButton;
+    private VideoView activeVideo;
     private static final String[] SORT_LABELS = {"Predefinito", "Nome A → Z", "Nome Z → A", "Data: più recenti", "Data: meno recenti", "Dimensione: più grandi", "Dimensione: più piccoli", "Tipo A → Z", "Tipo Z → A"};
     private boolean backupSettingsOpen;
 
@@ -689,6 +692,7 @@ public final class MainActivity extends Activity {
     }
 
     private void preview(Entry entry) {
+        if (isVideo(entry)) { showVideo(entry); return; }
         busy("Apertura…");
         async(() -> {
             File directory = new File(getCacheDir(), "previews"); directory.mkdirs();
@@ -708,6 +712,54 @@ public final class MainActivity extends Activity {
                 Intent intent = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, entry.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 startActivity(Intent.createChooser(intent, "Apri con"));
             } catch (Exception error) { toast("Nessuna app disponibile per aprire questo formato"); }
+        });
+    }
+
+    private boolean isVideo(Entry entry) {
+        String name = entry.name.toLowerCase(Locale.ROOT);
+        return entry.mime.startsWith("video/") || name.endsWith(".mp4") || name.endsWith(".m4v") || name.endsWith(".webm") || name.endsWith(".3gp") || name.endsWith(".mkv");
+    }
+
+    private void showVideo(Entry entry) {
+        closeInternalViewer(); internalViewer = true;
+        LinearLayout root = viewerPage(); root.setBackgroundColor(Color.BLACK); root.addView(viewerHeader(entry.name));
+        FrameLayout stage = new FrameLayout(this); stage.setBackgroundColor(Color.BLACK);
+        VideoView video = new VideoView(this); activeVideo = video;
+        FrameLayout.LayoutParams videoParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER);
+        stage.addView(video, videoParams);
+        TextView loading = text("Caricamento video…", 15); loading.setTextColor(Color.WHITE); loading.setGravity(Gravity.CENTER); stage.addView(loading, videoParams);
+        root.addView(stage, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        TextView hint = text("Tocca il video per i controlli", 13); hint.setGravity(Gravity.CENTER); hint.setTextColor(Color.WHITE); hint.setPadding(dp(12), dp(10), dp(12), dp(10)); root.addView(hint);
+        MediaController controls = new MediaController(this); controls.setAnchorView(stage); video.setMediaController(controls);
+        setContentView(root);
+        startVideo(entry, video, loading, 0, false);
+    }
+
+    private void startVideo(Entry entry, VideoView video, TextView loading, int position, boolean retried) {
+        async(() -> {
+            api.me(); // Refresh an expired access token before MediaPlayer opens the stream.
+            return api.videoUri(entry);
+        }, uri -> {
+            if (activeVideo != video || !internalViewer) return;
+            video.setOnPreparedListener(player -> {
+                if (activeVideo != video) return;
+                loading.setVisibility(View.GONE);
+                if (position > 0) video.seekTo(position);
+                video.start();
+            });
+            video.setOnErrorListener((player, what, extra) -> {
+                if (activeVideo != video) return true;
+                if (retried) { loading.setText("Impossibile riprodurre questo video. Verifica formato e connessione."); loading.setVisibility(View.VISIBLE); return true; }
+                int resumeAt = Math.max(position, video.getCurrentPosition());
+                loading.setText("Riconnessione al video…"); loading.setVisibility(View.VISIBLE);
+                async(() -> api.refreshVideoAccess(), refreshed -> {
+                    if (activeVideo != video) return;
+                    if (refreshed) startVideo(entry, video, loading, resumeAt, true);
+                    else { loading.setText("Sessione scaduta: effettua di nuovo l’accesso."); loading.setVisibility(View.VISIBLE); }
+                });
+                return true;
+            });
+            video.setVideoURI(uri, api.videoHeaders());
         });
     }
 
@@ -782,7 +834,11 @@ public final class MainActivity extends Activity {
         BitmapFactory.Options options = new BitmapFactory.Options(); options.inSampleSize = Math.max(1, sample); return BitmapFactory.decodeFile(file.getAbsolutePath(), options);
     }
 
-    private void closeInternalViewer() { internalViewer = false; galleryRequestId++; closePdf(); }
+    private void closeInternalViewer() {
+        internalViewer = false; galleryRequestId++;
+        if (activeVideo != null) { activeVideo.stopPlayback(); activeVideo = null; }
+        closePdf();
+    }
     private void closePdf() {
         pdfRenderGeneration++;
         pdfPageCache.evictAll();
