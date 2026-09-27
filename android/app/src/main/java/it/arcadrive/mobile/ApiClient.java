@@ -181,6 +181,19 @@ final class ApiClient {
         return downloadPath("/api/entries/" + id + "/content", destination);
     }
 
+    Uri videoUri(Entry entry) throws Exception {
+        if (!isAllowedServer(baseUrl)) throw new Exception("Usa HTTPS oppure un indirizzo HTTP della rete locale");
+        return Uri.parse(baseUrl + (entry.nas ? "/api/nas/content?path=" + enc(entry.id) : "/api/entries/" + enc(entry.id) + "/content"));
+    }
+
+    java.util.Map<String, String> videoHeaders() {
+        java.util.Map<String, String> headers = new java.util.HashMap<>();
+        headers.put("Authorization", "Bearer " + store.get("access"));
+        return headers;
+    }
+
+    boolean refreshVideoAccess() { return refresh(); }
+
     File downloadNas(String path, File destination) throws Exception {
         return downloadPath("/api/nas/content?path=" + enc(path), destination);
     }
