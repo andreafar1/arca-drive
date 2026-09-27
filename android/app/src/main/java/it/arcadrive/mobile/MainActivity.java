@@ -144,6 +144,8 @@ public final class MainActivity extends Activity {
     private boolean selectionMode;
     private LinearLayout selectionBar;
     private TextView selectionCount;
+    private Button sortButton;
+    private static final String[] SORT_LABELS = {"Predefinito", "Nome A → Z", "Nome Z → A", "Data: più recenti", "Data: meno recenti", "Dimensione: più grandi", "Dimensione: più piccoli", "Tipo A → Z", "Tipo Z → A"};
     private boolean backupSettingsOpen;
 
     @Override public void onCreate(Bundle state) {
@@ -257,6 +259,12 @@ public final class MainActivity extends Activity {
         search = input("⌕  Cerca file e cartelle", InputType.TYPE_CLASS_TEXT); search.setSingleLine();
         search.setBackground(rounded(Color.WHITE, LINE, 14));
         LinearLayout searchRow = new LinearLayout(this); searchRow.setGravity(Gravity.CENTER_VERTICAL); searchRow.setPadding(dp(16), dp(16), dp(16), dp(8)); searchRow.addView(search, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))); root.addView(searchRow);
+
+        LinearLayout sortRow = new LinearLayout(this); sortRow.setGravity(Gravity.END | Gravity.CENTER_VERTICAL); sortRow.setPadding(dp(16), 0, dp(16), dp(4));
+        sortButton = new Button(this); sortButton.setAllCaps(false); sortButton.setTextSize(12); sortButton.setTextColor(NAVY);
+        sortButton.setBackground(rounded(Color.rgb(229, 246, 241), Color.TRANSPARENT, 12));
+        sortButton.setOnClickListener(v -> showSortMenu()); sortRow.addView(sortButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38))); root.addView(sortRow);
+        updateSortButton();
 
         FrameLayout results = new FrameLayout(this);
         list = new ListView(this); list.setDivider(new android.graphics.drawable.ColorDrawable(LINE)); list.setDividerHeight(dp(1)); list.setPadding(dp(16), dp(4), dp(16), dp(6)); list.setClipToPadding(false); list.setBackgroundColor(Color.TRANSPARENT); results.addView(list, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -457,6 +465,7 @@ public final class MainActivity extends Activity {
         busy("Caricamento…");
         String parentId = currentFolder == null ? null : currentFolder.id;
         async(() -> api.entries(parentId, view, search == null ? "" : search.getText().toString()), entries -> {
+            sortEntries(entries);
             stopBusy(); currentEntries = entries;
             boolean gallery = "images".equals(view);
             imageGrid.setVisibility(gallery ? View.VISIBLE : View.GONE);
@@ -504,6 +513,43 @@ public final class MainActivity extends Activity {
                     return row;
                 }
             });
+        });
+    }
+
+    private int sortMode() { return Math.max(0, Math.min(SORT_LABELS.length - 1, getPreferences(MODE_PRIVATE).getInt("sort_" + view, 0))); }
+
+    private void updateSortButton() {
+        if (sortButton != null) sortButton.setText("⇅  " + SORT_LABELS[sortMode()] + "  ▾");
+    }
+
+    private void showSortMenu() {
+        new AlertDialog.Builder(this).setTitle("Ordina elementi").setSingleChoiceItems(SORT_LABELS, sortMode(), (dialog, which) -> {
+            getPreferences(MODE_PRIVATE).edit().putInt("sort_" + view, which).apply();
+            dialog.dismiss(); updateSortButton();
+            loadEntries();
+        }).setNegativeButton("Annulla", null).show();
+    }
+
+    private void sortEntries(List<Entry> entries) {
+        int mode = sortMode();
+        if (mode == 0) return;
+        entries.sort((a, b) -> {
+            if (!"images".equals(view) && a.folder() != b.folder()) return a.folder() ? -1 : 1;
+            int result;
+            switch (mode) {
+                case 1: case 2: result = a.name.compareToIgnoreCase(b.name); break;
+                case 3: case 4:
+                    String first = "images".equals(view) ? a.displayDate : a.updatedAt;
+                    String second = "images".equals(view) ? b.displayDate : b.updatedAt;
+                    result = first.compareTo(second); break;
+                case 5: case 6: result = Long.compare(a.size, b.size); break;
+                default:
+                    String firstType = a.folder() ? "" : a.name.contains(".") ? a.name.substring(a.name.lastIndexOf('.') + 1) : a.mime;
+                    String secondType = b.folder() ? "" : b.name.contains(".") ? b.name.substring(b.name.lastIndexOf('.') + 1) : b.mime;
+                    result = firstType.compareToIgnoreCase(secondType); break;
+            }
+            if (mode == 2 || mode == 3 || mode == 5 || mode == 8) result = -result;
+            return result != 0 ? result : a.name.compareToIgnoreCase(b.name);
         });
     }
 
@@ -1089,6 +1135,7 @@ public final class MainActivity extends Activity {
     private void switchView(String next) {
         clearSelection();
         view = next; currentFolder = null; folderStack.clear(); search.setText("");
+        updateSortButton();
         title.setText("files".equals(view) ? "I miei file" : "images".equals(view) ? "Immagini" : "nas".equals(view) ? "NAS" : "Cestino");
         back.setText("☰"); updateNavState(); loadEntries();
     }
