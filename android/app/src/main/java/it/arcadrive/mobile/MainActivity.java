@@ -717,7 +717,7 @@ public final class MainActivity extends Activity {
 
     private boolean isVideo(Entry entry) {
         String name = entry.name.toLowerCase(Locale.ROOT);
-        return entry.mime.startsWith("video/") || name.endsWith(".mp4") || name.endsWith(".m4v") || name.endsWith(".webm") || name.endsWith(".3gp") || name.endsWith(".mkv");
+        return entry.mime.startsWith("video/") || name.matches(".*\\.(mp4|m4v|mov|mkv|webm|avi|wmv|flv|mpeg|mpg|ts|mts|m2ts|3gp|ogv)$");
     }
 
     private void showVideo(Entry entry) {
@@ -732,13 +732,15 @@ public final class MainActivity extends Activity {
         TextView hint = text("Tocca il video per i controlli", 13); hint.setGravity(Gravity.CENTER); hint.setTextColor(Color.WHITE); hint.setPadding(dp(12), dp(10), dp(12), dp(10)); root.addView(hint);
         MediaController controls = new MediaController(this); controls.setAnchorView(stage); video.setMediaController(controls);
         setContentView(root);
-        startVideo(entry, video, loading, 0, false);
+        boolean convert = !entry.name.toLowerCase(Locale.ROOT).matches(".*\\.(mp4|m4v)$");
+        if (convert) loading.setText("Preparazione del video sul server…");
+        startVideo(entry, video, loading, 0, convert);
     }
 
-    private void startVideo(Entry entry, VideoView video, TextView loading, int position, boolean retried) {
+    private void startVideo(Entry entry, VideoView video, TextView loading, int position, boolean converted) {
         async(() -> {
             api.me(); // Refresh an expired access token before MediaPlayer opens the stream.
-            return api.videoUri(entry);
+            return converted ? api.preparedVideoUri(entry) : api.videoUri(entry);
         }, uri -> {
             if (activeVideo != video || !internalViewer) return;
             video.setOnPreparedListener(player -> {
@@ -749,14 +751,10 @@ public final class MainActivity extends Activity {
             });
             video.setOnErrorListener((player, what, extra) -> {
                 if (activeVideo != video) return true;
-                if (retried) { loading.setText("Impossibile riprodurre questo video. Verifica formato e connessione."); loading.setVisibility(View.VISIBLE); return true; }
+                if (converted) { loading.setText("Impossibile riprodurre questo video. Verifica formato e connessione."); loading.setVisibility(View.VISIBLE); return true; }
                 int resumeAt = Math.max(position, video.getCurrentPosition());
-                loading.setText("Riconnessione al video…"); loading.setVisibility(View.VISIBLE);
-                async(() -> api.refreshVideoAccess(), refreshed -> {
-                    if (activeVideo != video) return;
-                    if (refreshed) startVideo(entry, video, loading, resumeAt, true);
-                    else { loading.setText("Sessione scaduta: effettua di nuovo l’accesso."); loading.setVisibility(View.VISIBLE); }
-                });
+                loading.setText("Preparazione di una versione compatibile…"); loading.setVisibility(View.VISIBLE);
+                startVideo(entry, video, loading, resumeAt, true);
                 return true;
             });
             video.setVideoURI(uri, api.videoHeaders());
@@ -838,6 +836,11 @@ public final class MainActivity extends Activity {
         internalViewer = false; galleryRequestId++;
         if (activeVideo != null) { activeVideo.stopPlayback(); activeVideo = null; }
         closePdf();
+    }
+
+    @Override protected void onPause() {
+        if (activeVideo != null && activeVideo.isPlaying()) activeVideo.pause();
+        super.onPause();
     }
     private void closePdf() {
         pdfRenderGeneration++;
