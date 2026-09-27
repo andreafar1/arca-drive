@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -17,6 +18,9 @@ const PORT = Number(process.env.PORT || 3000);
 const STORAGE_DIR = process.env.STORAGE_DIR || '/data/files';
 const NAS_DIR = path.resolve(process.env.NAS_DIR || '/data/nas');
 const THUMBNAIL_DIR = process.env.THUMBNAIL_DIR || '/tmp/arca-drive-thumbnails';
+const VIDEO_CACHE_DIR = process.env.VIDEO_CACHE_DIR || '/tmp/arca-drive-videos';
+const videoJobs = new Map();
+const VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'flv', 'mpeg', 'mpg', 'ts', 'mts', 'm2ts', '3gp', 'ogv']);
 const MAX_FILE_SIZE = Number(process.env.MAX_FILE_SIZE_MB || 200) * 1024 * 1024;
 const MAX_UPLOAD_CHUNK = Number(process.env.MAX_UPLOAD_CHUNK_MB || 10) * 1024 * 1024;
 const ACCESS_TOKEN_MINUTES = Number(process.env.ACCESS_TOKEN_MINUTES || 15);
@@ -33,6 +37,7 @@ if (!DATABASE_URL && !process.env.PGHOST) throw new Error('Database configuratio
 
 await fs.mkdir(STORAGE_DIR, { recursive: true });
 await fs.mkdir(THUMBNAIL_DIR, { recursive: true });
+await fs.mkdir(VIDEO_CACHE_DIR, { recursive: true });
 const pool = DATABASE_URL
   ? new Pool({ connectionString: DATABASE_URL })
   : new Pool({
@@ -297,9 +302,100 @@ function nasMime(name) {
     xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', mkv: 'video/x-matroska', mov: 'video/quicktime', '3gp': 'video/3gpp',
+    avi: 'video/x-msvideo', wmv: 'video/x-ms-wmv', flv: 'video/x-flv', mpeg: 'video/mpeg', mpg: 'video/mpeg', ts: 'video/mp2t', mts: 'video/mp2t', m2ts: 'video/mp2t', ogv: 'video/ogg',
     mp3: 'audio/mpeg', zip: 'application/zip'
   })[extension] || 'application/octet-stream';
 }
+
+async function videoSource(req) {
+  const nas = req.query.source === 'nas';
+  if (!nas && req.query.source !== 'drive') throw Object.assign(new Error('Sorgente video non valida'), { status: 400 });
+  let real, name;
+  if (nas) {
+    const source = await existingNasPath(req.query.path || '');
+    real = source.real;
+    name = path.basename(real);
+  } else {
+    const entry = await canAccess(req.query.id, req.user.sub, false);
+    if (!entry || entry.kind !== 'file' || entry.is_trashed) throw Object.assign(new Error('Video non trovato'), { status: 404 });
+    real = path.join(STORAGE_DIR, entry.storage_name);
+    name = entry.name;
+  }
+  if (!VIDEO_EXTENSIONS.has(officeExtension(name))) throw Object.assign(new Error('Formato video non supportato'), { status: 400 });
+  const stat = await fs.stat(real);
+  if (!stat.isFile() || stat.size > 2 * 1024 ** 3) throw Object.assign(new Error('Video troppo grande o non valido'), { status: 400 });
+  const key = crypto.createHash('sha256').update(`${real}:${stat.size}:${stat.mtimeMs}`).digest('hex');
+  return { real, key, destination: path.join(VIDEO_CACHE_DIR, `${key}.mp4`) };
+}
+
+async function pruneVideoCache() {
+  const files = await fs.readdir(VIDEO_CACHE_DIR);
+  const complete = [];
+  for (const name of files) {
+    if (!/^[a-f0-9]{64}\.mp4$/.test(name)) continue;
+    const file = path.join(VIDEO_CACHE_DIR, name);
+    const stat = await fs.stat(file).catch(() => null);
+    if (stat) complete.push({ file, size: stat.size, mtimeMs: stat.mtimeMs });
+  }
+  complete.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  let total = 0;
+  for (const item of complete) {
+    total += item.size;
+    if (Date.now() - item.mtimeMs > 24 * 3600_000 || total > 4 * 1024 ** 3) await fs.unlink(item.file).catch(() => {});
+  }
+}
+
+function transcodeVideo(source) {
+  const temporary = path.join(VIDEO_CACHE_DIR, `${source.key}.${crypto.randomUUID()}.tmp`);
+  return new Promise((resolve, reject) => {
+    const args = ['-nostdin', '-hide_banner', '-loglevel', 'error', '-protocol_whitelist', 'file,pipe', '-i', source.real,
+      '-map', '0:v:0', '-map', '0:a:0?', '-vf', 'scale=w=min(1280\\,iw):h=-2',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25', '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-f', 'mp4', '-y', temporary];
+    const child = spawn('ffmpeg', args, { stdio: 'ignore' });
+    const timer = setTimeout(() => child.kill('SIGKILL'), 30 * 60_000);
+    child.once('error', error => { clearTimeout(timer); fs.unlink(temporary).catch(() => {}); reject(error); });
+    child.once('close', code => {
+      clearTimeout(timer);
+      (async () => {
+        if (code !== 0) throw new Error('Conversione non riuscita: controlla il formato del video');
+        await fs.rename(temporary, source.destination);
+        resolve();
+      })().catch(async error => { await fs.unlink(temporary).catch(() => {}); reject(error); });
+    });
+  });
+}
+
+app.get('/api/video/prepare', auth, async (req, res) => {
+  try {
+    const source = await videoSource(req);
+    if (await fs.stat(source.destination).then(s => s.size > 0).catch(() => false)) {
+      return res.json({ url: `/api/video/stream?source=${req.query.source}&${req.query.source === 'nas' ? `path=${encodeURIComponent(req.query.path)}` : `id=${encodeURIComponent(req.query.id)}`}` });
+    }
+    if (!videoJobs.has(source.key)) {
+      if (videoJobs.size >= 2) return res.status(429).json({ error: 'Conversioni in corso: riprova tra poco' });
+      await pruneVideoCache();
+      const job = { error: null };
+      videoJobs.set(source.key, job);
+      transcodeVideo(source).then(() => videoJobs.delete(source.key)).catch(error => { job.error = error.message; setTimeout(() => videoJobs.delete(source.key), 60_000); });
+    }
+    const job = videoJobs.get(source.key);
+    if (job?.error) return res.status(422).json({ error: job.error });
+    res.status(202).json({ status: 'converting' });
+  } catch (error) {
+    res.status(error.status || 400).json({ error: error.message });
+  }
+});
+
+app.get('/api/video/stream', auth, async (req, res) => {
+  try {
+    const source = await videoSource(req);
+    if (!await fs.stat(source.destination).then(s => s.size > 0).catch(() => false)) return res.status(404).json({ error: 'Video non ancora pronto' });
+    res.type('video/mp4').sendFile(source.destination);
+  } catch (error) {
+    res.status(error.status || 400).json({ error: error.message });
+  }
+});
 
 async function sendThumbnail(sourcePath, cacheIdentity, res) {
   const cacheName = `${crypto.createHash('sha256').update(cacheIdentity).digest('hex')}.webp`;
