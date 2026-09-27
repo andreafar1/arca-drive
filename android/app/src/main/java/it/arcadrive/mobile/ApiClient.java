@@ -186,6 +186,17 @@ final class ApiClient {
         return Uri.parse(baseUrl + (entry.nas ? "/api/nas/content?path=" + enc(entry.id) : "/api/entries/" + enc(entry.id) + "/content"));
     }
 
+    Uri preparedVideoUri(Entry entry) throws Exception {
+        String query = entry.nas ? "source=nas&path=" + enc(entry.id) : "source=drive&id=" + enc(entry.id);
+        for (int attempt = 0; attempt < 720; attempt++) {
+            Response result = request("GET", "/api/video/prepare?" + query, null, true, true);
+            if (result.status == 200) return Uri.parse(baseUrl + result.object().getString("url"));
+            if (result.status != 202) throw new Exception("Preparazione del video non riuscita");
+            Thread.sleep(2500);
+        }
+        throw new Exception("La preparazione del video ha richiesto troppo tempo");
+    }
+
     java.util.Map<String, String> videoHeaders() {
         java.util.Map<String, String> headers = new java.util.HashMap<>();
         headers.put("Authorization", "Bearer " + store.get("access"));
